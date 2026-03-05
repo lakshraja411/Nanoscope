@@ -424,7 +424,7 @@ if page == "Size Calculator":
 # =========================
 if page == "ΔI Range Explorer":
     
-    st.subheader("ΔI Range Explorer (from i0 → pore d, then orientations)")
+    st.subheader("ΔI Range Explorer")
 
     import numpy as np
     import pandas as pd
@@ -463,7 +463,7 @@ if page == "ΔI Range Explorer":
             "max": float(np.max(values)),
         }
 
-    st.markdown("### Inputs (measured open-pore current → infer pore diameter)")
+    st.markdown("### Inputs")
     col1, col2 = st.columns(2)
 
     with col1:
@@ -481,7 +481,7 @@ if page == "ΔI Range Explorer":
 
     d_m = pore_d_from_i0(i0_A, L_m, V, sigma)
     if np.isfinite(d_m):
-        st.info(f"Inferred pore diameter d ≈ **{d_m*1e9:.2f} nm** (from i0 using your equation)")
+        st.info(f"Inferred pore diameter d ≈ **{d_m*1e9:.2f} nm**")
     else:
         st.error("Could not infer pore diameter. Check that i0, V, σ, L are > 0.")
 
@@ -489,7 +489,7 @@ if page == "ΔI Range Explorer":
     st.markdown("### Choose biomarker shape model")
     model = st.selectbox(
         "Model",
-        ["Sphere (single ΔI)", "Ellipsoid (random orientations → range)", "Rod / spherocylinder (angle sweep → range)"]
+        ["Sphere", "Ellipsoid", "Rod / spherocylinder"]
     )
 
     # ---------- Model A: Sphere ----------
@@ -505,7 +505,7 @@ if page == "ΔI Range Explorer":
 
     # ---------- Model B: Ellipsoid ----------
     elif model.startswith("Ellipsoid"):
-        st.markdown("Ellipsoid defined by full axes (nm). Random orientations sampled; we report the ΔI range/percentiles.")
+        
         A_nm = st.number_input("Axis A (nm) (long)", value=14.0, step=0.5)
         B_nm = st.number_input("Axis B (nm)", value=4.0, step=0.5)
         C_nm = st.number_input("Axis C (nm)", value=4.0, step=0.5)
@@ -554,7 +554,7 @@ if page == "ΔI Range Explorer":
 
     # ---------- Model C: Rod / spherocylinder ----------
     else:
-        st.markdown("Rod model: sweep angle θ from 0° (aligned) to 90° (side-on).")
+        
         Lrod_nm = st.number_input("Rod length L_rod (nm)", value=50.0, step=5.0)
         Drod_nm = st.number_input("Rod diameter D_rod (nm)", value=6.0, step=0.5)
         n_angles = int(st.number_input("Angle steps", value=361, step=60))

@@ -26,7 +26,7 @@ page = st.sidebar.radio(
 )
 if page == "Home":
 
-    st.header("Welcome to NanoDecode")
+    st.header("Welcome to NanoScope")
 
     st.write("""
 NanoScope is a nanopore analysis tool for exploring pore geometry,

@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 st.title("🔬 NanoScope")
-st.caption("Nanopore Signal Analysis & Biomarker Modeling Suite")
+st.caption("Size and Current Drop Predictor")
 
 page = st.sidebar.radio(
     "Navigation",
@@ -29,7 +29,7 @@ if page == "Home":
     st.header("Welcome to NanoDecode")
 
     st.write("""
-NanoDecode is a nanopore analysis tool for exploring pore geometry,
+NanoScope is a nanopore analysis tool for exploring pore geometry,
 ionic current, and biomolecule blockade signals.
 
 This tool allows you to:
@@ -37,7 +37,7 @@ This tool allows you to:
 • Estimate nanopore size from IV curves  
 • Model blockade current (ΔI) for different biomarker geometries  
 • Explore orientation effects for ellipsoids and rod-like proteins  
-• Compare predicted signals with experimental nanopore data  
+
 """)
 
     st.subheader("Modules")
@@ -230,14 +230,14 @@ if page == "Size Calculator":
     st.subheader("2) Choose analysis mode")
     mode = st.radio(
         "Mode",
-        ["CBD (cylindrical) from conductance", "Conical pore from IV (tip radius)"],
+        ["CBD (cylindrical)", "Conical"],
         horizontal=False
     )
     plot_nA = st.checkbox("Plot current in nA", value=True, key="plot_nA_tab1")
 
     # ---------- CBD ----------
     if mode.startswith("CBD"):
-        st.subheader("CBD cylindrical diameter")
+        st.subheader("CBD cylindrical pore diameter")
 
         col1, col2 = st.columns(2)
         with col1:

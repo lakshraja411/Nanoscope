@@ -546,11 +546,11 @@ if page == "ΔI Range Explorer":
             if stats is None:
                 st.error("No valid events (dbio_eff too large relative to pore).")
             else:
-                st.success(
-                    f"ΔI (pA): min **{stats['min']:.0f}**, 5% **{stats['p5']:.0f}**, "
-                    f"median **{stats['median']:.0f}**, 95% **{stats['p95']:.0f}**, max **{stats['max']:.0f}**"
-                )
-                st.caption(f"Valid orientations used: {stats['count']:,}")
+                
+                st.success(f"Possible ΔI range: **{stats['min']:.0f} – {stats['max']:.0f} pA**")
+                st.info(f"Typical ΔI range (5–95%): **{stats['p5']:.0f} – {stats['p95']:.0f} pA**")
+                st.caption(f"Valid orientations used: {stats['count']:,} | Typical ΔI ≈ {stats['median']:.0f} pA")
+               
 
     # ---------- Model C: Rod / spherocylinder ----------
     else:
@@ -578,11 +578,11 @@ if page == "ΔI Range Explorer":
             if stats is None:
                 st.error("No valid angles (rod too large for pore).")
             else:
-                st.success(
-                    f"ΔI (pA): min **{stats['min']:.0f}**, 5% **{stats['p5']:.0f}**, "
-                    f"median **{stats['median']:.0f}**, 95% **{stats['p95']:.0f}**, max **{stats['max']:.0f}**"
-                )
+                st.success(f"Possible ΔI range: **{stats['min']:.0f} – {stats['max']:.0f} pA**")
+                st.info(f"Typical ΔI range (5–95%): **{stats['p5']:.0f} – {stats['p95']:.0f} pA**")
+                st.caption(f"Valid angles used: {stats['count']:,} | Typical ΔI ≈ {stats['median']:.0f} pA")
 
-                # Also show the two extremes explicitly
                 st.write(f"Aligned (θ=0°) ΔI ≈ {di_pA[0]:.0f} pA")
                 st.write(f"Side-on (θ=90°) ΔI ≈ {di_pA[-1]:.0f} pA")
+
+               

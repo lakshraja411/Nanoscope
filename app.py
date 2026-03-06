@@ -256,7 +256,181 @@ def pick_linear_region_auto(V, I, eps=0.005, window=0.05, min_points=6):
                 "Couldn't find enough points in a near-zero linear window.\n"
                 "Try increasing window, lowering min_points, or use a global fit."
             )
+def _to_px(x, y, W=1400, H=700):
+    """
+    Convert scene coordinates:
+    x in [-1, 1], y in [-1.35, 1.35]
+    to image pixels.
+    """
+    px = int((x + 1) / 2 * W)
+    py = int((1.35 - y) / 2.7 * H)
+    return px, py
 
+
+def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0_nA,
+                    show_labels=True, W=1400, H=700):
+    """
+    Build one combined dashboard frame as a PIL image.
+    Left = nanopore scene
+    Right = current trace
+    """
+    img = Image.new("RGB", (W, H), (10, 23, 48))
+    draw = ImageDraw.Draw(img)
+
+    # Layout
+    left_w = int(W * 0.62)
+    right_w = W - left_w
+    pad = 24
+
+    # Panels
+    panel_bg = (12, 24, 46)
+    border = (55, 130, 210)
+
+    draw.rounded_rectangle((pad, pad, left_w - pad, H - pad), radius=24, fill=panel_bg, outline=border, width=2)
+    draw.rounded_rectangle((left_w + pad, pad, W - pad, H - pad), radius=24, fill=panel_bg, outline=border, width=2)
+
+    # Titles
+    draw.text((pad + 18, pad + 12), "Nanopore translocation", fill=(220, 235, 255))
+    draw.text((left_w + pad + 18, pad + 12), "Current vs time", fill=(220, 235, 255))
+
+    # -------------------------
+    # Left panel: nanopore scene
+    # -------------------------
+    scene_x0 = pad + 10
+    scene_y0 = pad + 45
+    scene_x1 = left_w - pad - 10
+    scene_y1 = H - pad - 10
+
+    scene_w = scene_x1 - scene_x0
+    scene_h = scene_y1 - scene_y0
+
+    # membrane slabs
+    def scene_map(x, y):
+        px, py = _to_px(x, y, W=scene_w, H=scene_h)
+        return scene_x0 + px, scene_y0 + py
+
+    # membrane glow
+    xL, yT = scene_map(-1, 0.16)
+    xR, yB = scene_map(1, 0.10)
+    draw.rectangle((xL, yT, xR, yB), fill=(70, 180, 220))
+
+    xL, yT = scene_map(-1, -0.10)
+    xR, yB = scene_map(1, -0.16)
+    draw.rectangle((xL, yT, xR, yB), fill=(70, 180, 220))
+
+    # membrane body
+    xL, yT = scene_map(-1, 0.10)
+    xR, yB = scene_map(1, -0.10)
+    draw.rectangle((xL, yT, xR, yB), fill=(50, 110, 180))
+
+    # pore opening
+    xL, yT = scene_map(-0.035, 0.16)
+    xR, yB = scene_map(0.035, -0.16)
+    draw.rectangle((xL, yT, xR, yB), fill=(10, 23, 48))
+
+    xL, yT = scene_map(-0.020, 0.16)
+    xR, yB = scene_map(0.020, -0.16)
+    draw.rectangle((xL, yT, xR, yB), fill=(34, 211, 238))
+
+    # moving analyte
+    x = float(x_positions[frame_idx])
+    y = float(y_positions[frame_idx])
+    cx, cy = scene_map(x, y)
+
+    # glow
+    r1 = 26
+    draw.ellipse((cx - r1, cy - r1, cx + r1, cy + r1), fill=(139, 92, 246))
+    # core
+    r2 = 14
+    draw.ellipse((cx - r2, cy - r2, cx + r2, cy + r2), fill=(190, 140, 255))
+
+    if show_labels:
+        tx, ty = scene_map(0, 1.22)
+        draw.text((tx - 10, ty), "cis", fill=(180, 190, 205))
+        tx, ty = scene_map(0, -1.28)
+        draw.text((tx - 15, ty), "trans", fill=(180, 190, 205))
+
+        tx, ty = scene_map(-0.88, 1.05)
+        draw.text((tx, ty), "+", fill=(255, 100, 130))
+        tx, ty = scene_map(-0.88, -1.05)
+        draw.text((tx, ty), "-", fill=(100, 170, 255))
+
+    # -------------------------
+    # Right panel: current trace
+    # -------------------------
+    plot_x0 = left_w + pad + 20
+    plot_y0 = pad + 60
+    plot_x1 = W - pad - 20
+    plot_y1 = H - pad - 40
+
+    # axes
+    draw.line((plot_x0, plot_y1, plot_x1, plot_y1), fill=(120, 140, 165), width=2)
+    draw.line((plot_x0, plot_y0, plot_x0, plot_y1), fill=(120, 140, 165), width=2)
+
+    # y-range
+    y_min, y_max = 0.75, 1.02
+
+    def trace_map(t, val, tmax):
+        px = plot_x0 + int((t / max(1, tmax)) * (plot_x1 - plot_x0))
+        py = plot_y1 - int(((val - y_min) / (y_max - y_min)) * (plot_y1 - plot_y0))
+        return px, py
+
+    # I0 dashed line
+    i0_y = trace_map(0, 1.0, len(currents) - 1)[1]
+    for xx in range(plot_x0, plot_x1, 16):
+        draw.line((xx, i0_y, min(xx + 8, plot_x1), i0_y), fill=(180, 180, 180), width=1)
+
+    # trace line
+    pts = [trace_map(i, currents[i], len(currents) - 1) for i in range(frame_idx + 1)]
+    if len(pts) > 1:
+        draw.line(pts, fill=(56, 189, 248), width=4)
+
+    # current point
+    px, py = trace_map(frame_idx, currents[frame_idx], len(currents) - 1)
+    draw.ellipse((px - 6, py - 6, px + 6, py + 6), fill=(244, 63, 94))
+
+    # delta I vertical
+    draw.line((px, py, px, i0_y), fill=(244, 63, 94), width=2)
+
+    if show_labels:
+        draw.text((plot_x0 + 10, i0_y - 20), "I0", fill=(220, 235, 255))
+        draw.text((px + 8, py - 18), "I", fill=(255, 170, 180))
+        draw.text((px + 10, (py + i0_y) // 2), "dI", fill=(255, 170, 180))
+
+    # metrics
+    metrics = f"I0 = {i0_nA:.2f} nA   |   I = {currents[frame_idx] * i0_nA:.2f} nA   |   ΔI = {deltaI_pA[frame_idx]:.0f} pA"
+    draw.text((left_w + pad + 18, H - pad - 26), metrics, fill=(180, 210, 255))
+
+    return img
+
+
+def generate_gif_bytes(y_positions, x_positions, currents, deltaI_pA, i0_nA,
+                       speed=1.4, show_labels=True, step=2):
+    """
+    Generate GIF bytes from frames.
+    step=2 means use every 2nd frame to keep file size sensible.
+    """
+    frames = []
+    for idx in range(0, len(currents), step):
+        frame = build_gif_frame(
+            idx, y_positions, x_positions, currents, deltaI_pA, i0_nA,
+            show_labels=show_labels
+        )
+        frames.append(frame)
+
+    buf = io.BytesIO()
+    duration_ms = int(max(30, 80 / speed))
+
+    frames[0].save(
+        buf,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=duration_ms,
+        loop=0
+    )
+    buf.seek(0)
+    return buf.getvalue()
 # =========================
 # CBD cylindrical size + MC uncertainty
 # =========================
@@ -911,82 +1085,38 @@ if page == "Live Animation":
             f"**ΔI = {deltaI_pA[0]:.0f} pA**"
         )
 
-        st.markdown("### Save / Export / Animation")
+                st.markdown("### Save / Export")
+        col_save1, col_save2 = st.columns(2)
 
-        if "anim_running" not in st.session_state:
-            st.session_state.anim_running = False
-        if "anim_frame" not in st.session_state:
-            st.session_state.anim_frame = 0
+        with col_save1:
+            make_gif = st.button("Generate GIF")
 
-        col_btn1, col_btn2, col_btn3 = st.columns(3)
+        with col_save2:
+            run_anim = st.button("Run animation")
 
-        with col_btn1:
-            if st.button("▶ Run animation"):
-                st.session_state.anim_running = True
-                st.session_state.anim_frame = 0
-                st.rerun()
+        if make_gif:
+            try:
+                gif_bytes = generate_gif_bytes(
+                    y_positions=y_positions,
+                    x_positions=x_positions,
+                    currents=currents,
+                    deltaI_pA=deltaI_pA,
+                    i0_nA=i0_nA,
+                    speed=speed,
+                    show_labels=show_labels,
+                    step=2
+                )
 
-        with col_btn2:
-            if st.button("⏸ Stop animation"):
-                st.session_state.anim_running = False
+                st.success("GIF generated. Download below.")
+                st.download_button(
+                    label="Download animation GIF",
+                    data=gif_bytes,
+                    file_name="nanopore_translocation.gif",
+                    mime="image/gif"
+                )
 
-        with col_btn3:
-            if st.button("💾 Generate PNG downloads"):
-                try:
-                    scene_bytes = scene_fig.to_image(format="png", scale=2)
-                    trace_bytes = trace_fig.to_image(format="png", scale=2)
-
-                    st.success("PNG images generated. Use the buttons below to download them.")
-
-                    dl1, dl2 = st.columns(2)
-
-                    with dl1:
-                        st.download_button(
-                            label="Download nanopore scene PNG",
-                            data=scene_bytes,
-                            file_name="nanopore_scene_frame.png",
-                            mime="image/png"
-                        )
-
-                    with dl2:
-                        st.download_button(
-                            label="Download current trace PNG",
-                            data=trace_bytes,
-                            file_name="current_trace_frame.png",
-                            mime="image/png"
-                        )
-
-                except Exception as e:
-                    st.error(
-                        "Could not generate PNG downloads. "
-                        "Install kaleido with: pip install kaleido. "
-                        f"Error: {e}"
-                    )
-
-        # ---- frame display ----
-        frame_idx = st.session_state.anim_frame
-        scene_fig = build_scene(frame_idx)
-        trace_fig = build_trace(frame_idx)
-
-        scene_slot.plotly_chart(
-            scene_fig,
-            use_container_width=True,
-            config={"displayModeBar": False},
-            key=f"scene_chart_{frame_idx}"
-        )
-
-        trace_slot.plotly_chart(
-            trace_fig,
-            use_container_width=True,
-            config={"displayModeBar": False},
-            key=f"trace_chart_{frame_idx}"
-        )
-        metric_slot.markdown(
-            f"**I₀ = {i0_nA:.2f} nA**  |  "
-            f"**I = {currents[frame_idx] * i0_nA:.2f} nA**  |  "
-            f"**ΔI = {deltaI_pA[frame_idx]:.0f} pA**"
-        )
-
+            except Exception as e:
+                st.error(f"Could not generate GIF. Error: {e}")
         # ---- auto-advance animation ----
         if st.session_state.anim_running:
             time.sleep(max(0.03, 0.08 / speed))

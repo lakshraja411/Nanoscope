@@ -946,7 +946,10 @@ if page == "Live Animation":
             elif event_type == "Bump":
                 offset = min(pore_radius + rbio_eff * 0.7, offset_scene + 0.6 * rbio_eff)
             else:
-                offset = min(pore_radius + rbio_eff * 0.2, max(pore_radius - 0.8 * rbio_eff, offset_scene))
+                offset = min(
+                    pore_radius + rbio_eff * 0.2,
+                    max(pore_radius - 0.8 * rbio_eff, offset_scene)
+                )
 
             A_blocked = circle_overlap_area(pore_radius, rbio_eff, offset)
             di = delta_i_from_blocked_area(i0_A, d_m, L_m, V, sigma, A_blocked)
@@ -1049,8 +1052,13 @@ if page == "Live Animation":
                 margin=dict(l=10, r=10, t=10, b=10),
                 height=300,
                 xaxis=dict(title="Time", color="#94a3b8", showgrid=False),
-                yaxis=dict(title="Normalized current", color="#94a3b8", range=[0.75, 1.02],
-                           showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
+                yaxis=dict(
+                    title="Normalized current",
+                    color="#94a3b8",
+                    range=[0.75, 1.02],
+                    showgrid=True,
+                    gridcolor="rgba(255,255,255,0.06)"
+                ),
                 showlegend=False,
             )
 
@@ -1066,6 +1074,13 @@ if page == "Live Animation":
                                    font=dict(color="#fda4af", size=14))
             return fig
 
+        # ---- session state init ----
+        if "anim_running" not in st.session_state:
+            st.session_state.anim_running = False
+
+        if "anim_frame" not in st.session_state:
+            st.session_state.anim_frame = 0
+
         left, right = st.columns([1.7, 1])
 
         with left:
@@ -1074,26 +1089,21 @@ if page == "Live Animation":
             trace_slot = st.empty()
             metric_slot = st.empty()
 
-        frame_idx = 0
-        scene_fig = build_scene(frame_idx)
-        trace_fig = build_trace(frame_idx)
+        st.markdown("### Save / Export / Animation")
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
 
-        scene_slot.plotly_chart(scene_fig, use_container_width=True, config={"displayModeBar": False})
-        trace_slot.plotly_chart(trace_fig, use_container_width=True, config={"displayModeBar": False})
-        metric_slot.markdown(
-            f"**I₀ = {i0_nA:.2f} nA**  |  "
-            f"**I = {currents[0] * i0_nA:.2f} nA**  |  "
-            f"**ΔI = {deltaI_pA[0]:.0f} pA**"
-        )
+        with col_btn1:
+            if st.button("▶ Run animation"):
+                st.session_state.anim_running = True
+                st.session_state.anim_frame = 0
+                st.rerun()
 
-        st.markdown("### Save / Export")
-        col_save1, col_save2 = st.columns(2)
+        with col_btn2:
+            if st.button("⏸ Stop animation"):
+                st.session_state.anim_running = False
 
-        with col_save1:
+        with col_btn3:
             make_gif = st.button("Generate GIF")
-
-        with col_save2:
-            run_anim = st.button("Run animation")
 
         if make_gif:
             try:
@@ -1118,6 +1128,32 @@ if page == "Live Animation":
 
             except Exception as e:
                 st.error(f"Could not generate GIF. Error: {e}")
+
+        # ---- render current frame once per rerun ----
+        frame_idx = st.session_state.anim_frame
+        scene_fig = build_scene(frame_idx)
+        trace_fig = build_trace(frame_idx)
+
+        scene_slot.plotly_chart(
+            scene_fig,
+            use_container_width=True,
+            config={"displayModeBar": False},
+            key=f"scene_chart_{frame_idx}"
+        )
+
+        trace_slot.plotly_chart(
+            trace_fig,
+            use_container_width=True,
+            config={"displayModeBar": False},
+            key=f"trace_chart_{frame_idx}"
+        )
+
+        metric_slot.markdown(
+            f"**I₀ = {i0_nA:.2f} nA**  |  "
+            f"**I = {currents[frame_idx] * i0_nA:.2f} nA**  |  "
+            f"**ΔI = {deltaI_pA[frame_idx]:.0f} pA**"
+        )
+
         # ---- auto-advance animation ----
         if st.session_state.anim_running:
             time.sleep(max(0.03, 0.08 / speed))

@@ -4,9 +4,9 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 from scipy.optimize import brentq, fsolve
-
-import streamlit as st
-
+import plotly.graph_objects as go
+import time
+import os
 st.set_page_config(
     page_title="NanoScope",
     layout="wide",
@@ -22,6 +22,7 @@ page = st.sidebar.radio(
         "Home",
         "Size Calculator",
         "ΔI Range Explorer",
+        "Live Animation"
     ]
 )
 if page == "Home":
@@ -672,3 +673,264 @@ if page == "ΔI Range Explorer":
 
                 st.write(f"Aligned (θ=0°) ΔI ≈ {di_pA[0]:.0f} pA")
                 st.write(f"Side-on (θ=90°) ΔI ≈ {di_pA[-1]:.0f} pA")
+
+# =========================
+# TAB 3: Live Animation
+# =========================
+if page == "Live Animation":
+
+    st.subheader("Live nanopore translocation animation")
+
+    st.markdown("### Inputs")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        i0_nA = st.number_input("Open pore current i₀ (nA)", value=24.0, step=0.5, key="anim_i0")
+        V = st.number_input("Voltage V (V)", value=0.300, step=0.010, format="%.3f", key="anim_V")
+        sigma = st.number_input("Conductivity σ (S/m)", value=11.51, step=0.01, key="anim_sigma")
+
+    with col2:
+        L_nm = st.number_input("Pore length L (nm)", value=7.0, step=0.5, key="anim_L")
+        occupancy = st.slider("Occupancy factor", 0.3, 1.0, 1.0, 0.05, key="anim_occ")
+        speed = st.slider("Animation speed", 0.5, 3.0, 1.4, 0.1, key="anim_speed")
+
+    st.markdown("### Biomolecule settings")
+    A_nm = st.number_input("Axis A (nm)", value=14.0, step=0.5, key="anim_A")
+    B_nm = st.number_input("Axis B (nm)", value=4.0, step=0.5, key="anim_B")
+    C_nm = st.number_input("Axis C (nm)", value=4.0, step=0.5, key="anim_C")
+
+    event_type = st.selectbox(
+        "Event type",
+        ["Centered translocation", "Bump", "Adsorption / rim interaction"],
+        key="anim_event"
+    )
+
+    show_labels = st.checkbox("Show labels", value=True, key="anim_labels")
+
+    i0_A = i0_nA * 1e-9
+    L_m = L_nm * 1e-9
+    d_m = pore_d_from_i0(i0_A, L_m, V, sigma)
+
+    if not np.isfinite(d_m):
+        st.error("Could not infer pore diameter from the given i₀, V, σ, and L.")
+    else:
+        st.info(f"Inferred pore diameter d ≈ **{d_m*1e9:.2f} nm**")
+
+        pore_radius = d_m / 2.0
+        a = (A_nm / 2) * 1e-9
+        b = (B_nm / 2) * 1e-9
+        c = (C_nm / 2) * 1e-9
+
+        frames = 120
+
+        if event_type == "Centered translocation":
+            y_positions = np.linspace(1.18, -1.18, frames)
+            x_positions = np.zeros(frames)
+        elif event_type == "Bump":
+            half = frames // 2
+            y_in = np.linspace(1.18, 0.18, half)
+            y_out = np.linspace(0.18, 1.18, frames - half)
+            y_positions = np.concatenate([y_in, y_out])
+            x_positions = np.linspace(0.28, 0.10, frames)
+        else:
+            y_positions = np.linspace(0.45, -0.05, frames)
+            x_positions = np.ones(frames) * 0.16
+
+        angles = np.linspace(0, 2*np.pi, frames)
+        nvecs = np.array([
+            [
+                0.65*np.cos(t),
+                0.30*np.sin(t),
+                np.sqrt(max(0, 1 - (0.65*np.cos(t))**2 - (0.30*np.sin(t))**2))
+            ]
+            for t in angles
+        ])
+
+        currents = []
+        deltaI_pA = []
+        blocked_areas_nm2 = []
+
+        for i in range(frames):
+            nvec = nvecs[i]
+            Aproj = projected_area_ellipsoid(a, b, c, nvec.reshape(1, 3))[0]
+            dbio_eff = 2 * np.sqrt(Aproj / np.pi)
+            rbio_eff = 0.5 * dbio_eff * occupancy
+
+            offset_scene = abs(x_positions[i]) * pore_radius / 0.18
+
+            if event_type == "Centered translocation":
+                offset = 0.0
+            elif event_type == "Bump":
+                offset = min(pore_radius + rbio_eff * 0.7, offset_scene + 0.6 * rbio_eff)
+            else:
+                offset = min(pore_radius + rbio_eff * 0.2, max(pore_radius - 0.8 * rbio_eff, offset_scene))
+
+            A_blocked = circle_overlap_area(pore_radius, rbio_eff, offset)
+            di = delta_i_from_blocked_area(i0_A, d_m, L_m, V, sigma, A_blocked)
+
+            if not np.isfinite(di):
+                di = 0.0
+
+            I_now = i0_A - di
+            currents.append(I_now / i0_A)   # normalized current
+            deltaI_pA.append(di * 1e12)
+            blocked_areas_nm2.append(A_blocked * 1e18)
+
+        currents = np.array(currents)
+        deltaI_pA = np.array(deltaI_pA)
+        blocked_areas_nm2 = np.array(blocked_areas_nm2)
+
+        def build_scene(frame_idx):
+            y = float(y_positions[frame_idx])
+            x = float(x_positions[frame_idx])
+
+            fig = go.Figure()
+            fig.update_layout(
+                paper_bgcolor="#0a1730",
+                plot_bgcolor="#0a1730",
+                margin=dict(l=10, r=10, t=10, b=10),
+                height=620,
+                xaxis=dict(range=[-1, 1], visible=False),
+                yaxis=dict(range=[-1.35, 1.35], visible=False, scaleanchor="x", scaleratio=1),
+                showlegend=False,
+            )
+
+            membrane_color = "rgba(52, 123, 219, 0.25)"
+            glow_color = "rgba(56, 189, 248, 0.45)"
+
+            fig.add_shape(type="rect", x0=-1, x1=1, y0=-0.10, y1=0.10,
+                          fillcolor=membrane_color, line=dict(width=0))
+            fig.add_shape(type="rect", x0=-1, x1=1, y0=-0.16, y1=-0.10,
+                          fillcolor=glow_color, line=dict(width=0))
+            fig.add_shape(type="rect", x0=-1, x1=1, y0=0.10, y1=0.16,
+                          fillcolor=glow_color, line=dict(width=0))
+
+            # pore opening
+            fig.add_shape(type="rect", x0=-0.035, x1=0.035, y0=-0.16, y1=0.16,
+                          fillcolor="#0a1730", line=dict(width=0))
+            fig.add_shape(type="rect", x0=-0.020, x1=0.020, y0=-0.16, y1=0.16,
+                          fillcolor="rgba(34,211,238,0.85)", line=dict(width=0))
+
+            if show_labels:
+                fig.add_annotation(x=0, y=1.25, text="cis", showarrow=False,
+                                   font=dict(color="#94a3b8", size=14))
+                fig.add_annotation(x=0, y=-1.25, text="trans", showarrow=False,
+                                   font=dict(color="#94a3b8", size=14))
+                fig.add_annotation(x=-0.88, y=1.05, text="+", showarrow=False,
+                                   font=dict(color="#fb7185", size=18))
+                fig.add_annotation(x=-0.88, y=-1.05, text="−", showarrow=False,
+                                   font=dict(color="#60a5fa", size=18))
+
+            fig.add_trace(go.Scatter(
+                x=[x], y=[y],
+                mode="markers",
+                marker=dict(size=34, color="#8b5cf6", opacity=0.14),
+                hoverinfo="skip"
+            ))
+            fig.add_trace(go.Scatter(
+                x=[x], y=[y],
+                mode="markers",
+                marker=dict(size=20, color="#8b5cf6", opacity=0.90),
+                hoverinfo="skip"
+            ))
+
+            return fig
+
+        def build_trace(frame_idx):
+            fig = go.Figure()
+            t = np.arange(frame_idx + 1)
+            y = currents[:frame_idx + 1]
+
+            fig.add_trace(go.Scatter(
+                x=t, y=y,
+                mode="lines",
+                line=dict(color="#38bdf8", width=3)
+            ))
+
+            fig.add_hline(y=1.0, line_dash="dash", line_color="rgba(255,255,255,0.25)")
+            fig.add_trace(go.Scatter(
+                x=[frame_idx], y=[currents[frame_idx]],
+                mode="markers",
+                marker=dict(size=10, color="#f43f5e"),
+                showlegend=False
+            ))
+            fig.add_trace(go.Scatter(
+                x=[frame_idx, frame_idx],
+                y=[currents[frame_idx], 1.0],
+                mode="lines",
+                line=dict(color="#f43f5e", width=2),
+                showlegend=False
+            ))
+
+            fig.update_layout(
+                paper_bgcolor="#0a1730",
+                plot_bgcolor="#0a1730",
+                margin=dict(l=10, r=10, t=10, b=10),
+                height=300,
+                xaxis=dict(title="Time", color="#94a3b8", showgrid=False),
+                yaxis=dict(title="Normalized current", color="#94a3b8", range=[0.75, 1.02],
+                           showgrid=True, gridcolor="rgba(255,255,255,0.06)"),
+                showlegend=False,
+            )
+
+            if show_labels:
+                fig.add_annotation(x=max(4, frame_idx * 0.12), y=1.0 + 0.006,
+                                   text="I₀", showarrow=False,
+                                   font=dict(color="#cbd5e1", size=14))
+                fig.add_annotation(x=frame_idx + 1, y=currents[frame_idx] - 0.012,
+                                   text="I", showarrow=False,
+                                   font=dict(color="#fda4af", size=14))
+                fig.add_annotation(x=frame_idx + 4, y=(1.0 + currents[frame_idx]) / 2,
+                                   text="ΔI", showarrow=False,
+                                   font=dict(color="#fda4af", size=14))
+            return fig
+
+        left, right = st.columns([1.7, 1])
+
+        with left:
+            scene_slot = st.empty()
+        with right:
+            trace_slot = st.empty()
+            metric_slot = st.empty()
+
+        frame_idx = 0
+        scene_fig = build_scene(frame_idx)
+        trace_fig = build_trace(frame_idx)
+
+        scene_slot.plotly_chart(scene_fig, use_container_width=True, config={"displayModeBar": False})
+        trace_slot.plotly_chart(trace_fig, use_container_width=True, config={"displayModeBar": False})
+        metric_slot.markdown(
+            f"**I₀ = {i0_nA:.2f} nA**  |  "
+            f"**I = {currents[0]*i0_nA:.2f} nA**  |  "
+            f"**ΔI = {deltaI_pA[0]:.0f} pA**"
+        )
+
+        st.markdown("### Save / Export")
+        col_save1, col_save2 = st.columns(2)
+
+        with col_save1:
+            save_current_png = st.button("Save current frame as PNG")
+        with col_save2:
+            run_anim = st.button("Run animation")
+
+        if save_current_png:
+            try:
+                scene_fig.write_image("nanopore_scene_frame.png", scale=2)
+                trace_fig.write_image("current_trace_frame.png", scale=2)
+                st.success("Saved PNGs: nanopore_scene_frame.png and current_trace_frame.png")
+            except Exception as e:
+                st.error(f"Could not save PNG. Install kaleido with: pip install kaleido. Error: {e}")
+
+        if run_anim:
+            for i in range(frames):
+                scene_fig = build_scene(i)
+                trace_fig = build_trace(i)
+
+                scene_slot.plotly_chart(scene_fig, use_container_width=True, config={"displayModeBar": False})
+                trace_slot.plotly_chart(trace_fig, use_container_width=True, config={"displayModeBar": False})
+                metric_slot.markdown(
+                    f"**I₀ = {i0_nA:.2f} nA**  |  "
+                    f"**I = {currents[i]*i0_nA:.2f} nA**  |  "
+                    f"**ΔI = {deltaI_pA[i]:.0f} pA**"
+                )
+                time.sleep(max(0.01, 0.04 / speed))

@@ -919,31 +919,31 @@ if page == "Live Animation":
         with col_save2:
             run_anim = st.button("Run animation")
         
-      if save_current_png:
-          try:
-              scene_bytes = scene_fig.to_image(format="png", scale=2)
-              trace_bytes = trace_fig.to_image(format="png", scale=2)
+    if save_current_png:
+        try:
+            scene_bytes = scene_fig.to_image(format="png", scale=2)
+            trace_bytes = trace_fig.to_image(format="png", scale=2)
     
-              st.success("PNG images generated. Use the buttons below to download them.")
+            st.success("PNG images generated. Use the buttons below to download them.")
     
-              dl1, dl2 = st.columns(2)
-              with dl1:
-                  st.download_button(
-                      label="Download nanopore scene PNG",
-                      data=scene_bytes,
-                      file_name="nanopore_scene_frame.png",
-                      mime="image/png"
-                  )
-                with dl2:
-                    st.download_button(
-                        label="Download current trace PNG",
-                        data=trace_bytes,
-                        file_name="current_trace_frame.png",
-                        mime="image/png"
-                    )
+            dl1, dl2 = st.columns(2)
+            with dl1:
+                st.download_button(
+                    label="Download nanopore scene PNG",
+                    data=scene_bytes,
+                    file_name="nanopore_scene_frame.png",
+                    mime="image/png"
+                )
+            with dl2:
+                st.download_button(
+                    label="Download current trace PNG",
+                    data=trace_bytes,
+                    file_name="current_trace_frame.png",
+                    mime="image/png"
+                )
             
-            except Exception as e:
-                st.error(
+        except Exception as e:
+            st.error(
                     "Could not generate PNG downloads. "
                     "Install kaleido with: pip install kaleido. "
                     f"Error: {e}"

@@ -911,7 +911,7 @@ if page == "Live Animation":
             f"**ΔI = {deltaI_pA[0]:.0f} pA**"
         )
 
-                st.markdown("### Save / Export / Animation")
+        st.markdown("### Save / Export / Animation")
 
         if "anim_running" not in st.session_state:
             st.session_state.anim_running = False

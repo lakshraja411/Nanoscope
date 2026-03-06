@@ -449,49 +449,49 @@ if page == "ΔI Range Explorer":
         i_withbio = i_from_d(d_withbio, L_m, V_V, sigma_Sm)
         return i0_A - i_withbio  # A
     def circle_overlap_area(R, r, x):
-    """
-    Overlap area between two circles:
-    - pore radius = R
-    - biomolecule effective radius = r
-    - center-to-center offset = x
-    Returns area in m^2
-    """
-    # no overlap
-    if x >= R + r:
-        return 0.0
-
-    # one fully inside the other
-    if x <= abs(R - r):
-        return np.pi * min(R, r)**2
-
-    # partial overlap
-    term1 = r**2 * np.arccos((x**2 + r**2 - R**2) / (2 * x * r))
-    term2 = R**2 * np.arccos((x**2 + R**2 - r**2) / (2 * x * R))
-    term3 = 0.5 * np.sqrt(
-        (-x + r + R) *
-        (x + r - R) *
-        (x - r + R) *
-        (x + r + R)
-    )
-    return term1 + term2 - term3
+        """
+        Overlap area between two circles:
+        - pore radius = R
+        - biomolecule effective radius = r
+        - center-to-center offset = x
+        Returns area in m^2
+        """
+        # no overlap
+        if x >= R + r:
+            return 0.0
+    
+        # one fully inside the other
+        if x <= abs(R - r):
+            return np.pi * min(R, r)**2
+    
+        # partial overlap
+        term1 = r**2 * np.arccos((x**2 + r**2 - R**2) / (2 * x * r))
+        term2 = R**2 * np.arccos((x**2 + R**2 - r**2) / (2 * x * R))
+        term3 = 0.5 * np.sqrt(
+            (-x + r + R) *
+            (x + r - R) *
+            (x - r + R) *
+            (x + r + R)
+        )
+        return term1 + term2 - term3
 
 
     def dbio_from_blocked_area(A_blocked):
-    """
-    Convert blocked area to equivalent circular blocking diameter.
-    A = pi d^2 / 4  => d = 2 sqrt(A/pi)
-    """
-    if A_blocked <= 0:
-        return 0.0
-    return 2.0 * np.sqrt(A_blocked / np.pi)
+        """
+        Convert blocked area to equivalent circular blocking diameter.
+        A = pi d^2 / 4  => d = 2 sqrt(A/pi)
+        """
+        if A_blocked <= 0:
+            return 0.0
+        return 2.0 * np.sqrt(A_blocked / np.pi)
 
 
     def delta_i_from_blocked_area(i0_A, d_m, L_m, V_V, sigma_Sm, A_blocked):
-    """
-    Compute ΔI from blocked overlap area directly.
-    """
-    dbio_eff = dbio_from_blocked_area(A_blocked)
-    return delta_i(i0_A, d_m, L_m, V_V, sigma_Sm, dbio_eff)
+        """
+        Compute ΔI from blocked overlap area directly.
+        """
+        dbio_eff = dbio_from_blocked_area(A_blocked)
+        return delta_i(i0_A, d_m, L_m, V_V, sigma_Sm, dbio_eff)
     def summarize(values):
         values = np.asarray(values)
         values = values[np.isfinite(values)]

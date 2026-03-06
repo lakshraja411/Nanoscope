@@ -7,6 +7,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from scipy.optimize import brentq, fsolve
+from PIL import Image, ImageDraw
 
 st.set_page_config(
     page_title="NanoScope",

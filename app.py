@@ -127,7 +127,8 @@ page = st.sidebar.radio(
         "Home",
         "Size Calculator",
         "ΔI Range Explorer",
-        "Live Animation"
+        "Live Animation",
+        "Biomolecule Flow"
     ]
 )
 
@@ -166,6 +167,11 @@ the nanopore with different orientations.
 
 Animate a translocation/bump/adsorption event with a synchronized
 current trace based on the same blockade model.
+
+**Biomolecule Flow**
+
+Visualize continuous biomolecule flow toward the nanopore with a
+dynamic current signal driven by pore occupancy.
 """)
 
     st.info("Developed for nanopore biosensing research.")
@@ -1163,4 +1169,236 @@ if page == "Live Animation":
                 st.session_state.anim_frame = 0
                 st.session_state.anim_running = False
 
+            st.rerun()
+
+# =========================
+# TAB 4: Biomolecule Flow
+# =========================
+if page == "Biomolecule Flow":
+
+    st.subheader("Biomolecule flow through a nanopore")
+    st.caption("Continuous particle stream with pore occupancy-based current drop")
+
+    st.markdown("### Pore and signal settings")
+    c1, c2 = st.columns(2)
+
+    with c1:
+        i0_nA = st.number_input("Open pore current i₀ (nA)", value=24.0, step=0.5, key="flow_i0")
+        V = st.number_input("Voltage V (V)", value=0.300, step=0.010, format="%.3f", key="flow_V")
+        sigma = st.number_input("Conductivity σ (S/m)", value=11.51, step=0.01, key="flow_sigma")
+
+    with c2:
+        L_nm = st.number_input("Pore length L (nm)", value=7.0, step=0.5, key="flow_L")
+        molecule_d_nm = st.number_input("Molecule equivalent diameter (nm)", value=5.0, step=0.2, key="flow_dbio")
+        speed = st.slider("Animation speed", 0.5, 3.0, 1.4, 0.1, key="flow_speed")
+
+    st.markdown("### Flow controls")
+    c3, c4, c5 = st.columns(3)
+    with c3:
+        n_particles = int(st.slider("Particle count", 20, 160, 80, 5, key="flow_particles"))
+    with c4:
+        drift = st.slider("Downward drift", 0.003, 0.040, 0.014, 0.001, key="flow_drift")
+    with c5:
+        diffusion = st.slider("Lateral diffusion", 0.001, 0.040, 0.010, 0.001, key="flow_diff")
+
+    tail_len = int(st.slider("Trail length", 2, 16, 8, 1, key="flow_tail"))
+    seed = int(st.number_input("Random seed", value=7, step=1, key="flow_seed"))
+
+    i0_A = i0_nA * 1e-9
+    L_m = L_nm * 1e-9
+    d_m = pore_d_from_i0(i0_A, L_m, V, sigma)
+
+    if not np.isfinite(d_m):
+        st.error("Could not infer pore diameter from the given i₀, V, σ, and L.")
+    else:
+        pore_d_nm = d_m * 1e9
+        st.info(f"Inferred pore diameter d ≈ **{pore_d_nm:.2f} nm**")
+
+        frames = 240
+        rng = np.random.default_rng(seed)
+
+        x_hist = np.zeros((frames, n_particles), dtype=float)
+        y_hist = np.zeros((frames, n_particles), dtype=float)
+
+        x = rng.uniform(-0.88, 0.88, size=n_particles)
+        y = rng.uniform(0.30, 1.25, size=n_particles)
+
+        pore_half_w = 0.055
+        pore_half_h = 0.17
+
+        for f in range(frames):
+            x_hist[f] = x
+            y_hist[f] = y
+
+            attract = np.exp(-((y - 0.08) / 0.34) ** 2)
+            x = x * (1.0 - 0.055 * attract) + rng.normal(0.0, diffusion, size=n_particles)
+            y = y - drift - 0.012 * attract + rng.normal(0.0, diffusion * 0.7, size=n_particles)
+
+            escaped = y < -1.30
+            if np.any(escaped):
+                x[escaped] = rng.uniform(-0.90, 0.90, size=np.sum(escaped))
+                y[escaped] = rng.uniform(0.95, 1.30, size=np.sum(escaped))
+
+            x = np.clip(x, -0.95, 0.95)
+
+        dbio_m = molecule_d_nm * 1e-9
+        single_di_A = delta_i(i0_A, d_m, L_m, V, sigma, dbio_m)
+        if not np.isfinite(single_di_A) or single_di_A < 0:
+            single_di_A = 0.0
+
+        signal = np.zeros(frames, dtype=float)
+        for f in range(frames):
+            x_now = x_hist[f]
+            y_now = y_hist[f]
+            occupancy_field = np.exp(
+                -((x_now / pore_half_w) ** 2 + (y_now / pore_half_h) ** 2)
+            )
+            signal[f] = np.sum(occupancy_field)
+
+        signal = np.convolve(signal, np.ones(5) / 5, mode="same")
+        signal = np.clip(signal, 0.0, 3.0)
+
+        deltaI_A = single_di_A * signal
+        currents_nA = (i0_A - deltaI_A) * 1e9
+        currents_norm = np.where(i0_A > 0, (i0_A - deltaI_A) / i0_A, 1.0)
+        deltaI_pA = deltaI_A * 1e12
+
+        def build_flow_scene(frame_idx):
+            fig = go.Figure()
+            fig.update_layout(
+                paper_bgcolor="#071628",
+                plot_bgcolor="#071628",
+                margin=dict(l=10, r=10, t=10, b=10),
+                height=620,
+                xaxis=dict(range=[-1, 1], visible=False),
+                yaxis=dict(range=[-1.35, 1.35], visible=False, scaleanchor="x", scaleratio=1),
+                showlegend=False
+            )
+
+            fig.add_shape(type="rect", x0=-1, x1=1, y0=-0.10, y1=0.10,
+                          fillcolor="rgba(56, 120, 185, 0.30)", line=dict(width=0))
+            fig.add_shape(type="rect", x0=-1, x1=1, y0=-0.16, y1=-0.10,
+                          fillcolor="rgba(45, 176, 220, 0.45)", line=dict(width=0))
+            fig.add_shape(type="rect", x0=-1, x1=1, y0=0.10, y1=0.16,
+                          fillcolor="rgba(45, 176, 220, 0.45)", line=dict(width=0))
+            fig.add_shape(type="rect", x0=-0.038, x1=0.038, y0=-0.17, y1=0.17,
+                          fillcolor="#071628", line=dict(width=0))
+            fig.add_shape(type="rect", x0=-0.022, x1=0.022, y0=-0.17, y1=0.17,
+                          fillcolor="rgba(16, 220, 255, 0.90)", line=dict(width=0))
+
+            lo = max(0, frame_idx - tail_len)
+            tx = x_hist[lo:frame_idx + 1].reshape(-1)
+            ty = y_hist[lo:frame_idx + 1].reshape(-1)
+            fig.add_trace(go.Scatter(
+                x=tx, y=ty, mode="markers",
+                marker=dict(size=5, color="rgba(125, 211, 252, 0.22)"),
+                hoverinfo="skip"
+            ))
+
+            in_pore = (np.abs(x_hist[frame_idx]) < pore_half_w) & (np.abs(y_hist[frame_idx]) < pore_half_h)
+            colors = np.where(in_pore, "#f97316", "#67e8f9")
+            sizes = np.where(in_pore, 12, 8)
+
+            fig.add_trace(go.Scatter(
+                x=x_hist[frame_idx], y=y_hist[frame_idx], mode="markers",
+                marker=dict(size=sizes, color=colors, opacity=0.95, line=dict(width=0)),
+                hoverinfo="skip"
+            ))
+
+            fig.add_annotation(x=-0.89, y=1.06, text="+", showarrow=False,
+                               font=dict(color="#fb7185", size=18))
+            fig.add_annotation(x=-0.89, y=-1.06, text="−", showarrow=False,
+                               font=dict(color="#60a5fa", size=18))
+            fig.add_annotation(x=0.0, y=1.24, text="cis reservoir", showarrow=False,
+                               font=dict(color="#94a3b8", size=13))
+            fig.add_annotation(x=0.0, y=-1.24, text="trans reservoir", showarrow=False,
+                               font=dict(color="#94a3b8", size=13))
+            return fig
+
+        def build_flow_trace(frame_idx):
+            fig = go.Figure()
+            t = np.arange(frame_idx + 1)
+
+            fig.add_trace(go.Scatter(
+                x=t, y=currents_norm[:frame_idx + 1],
+                mode="lines",
+                line=dict(color="#38bdf8", width=3)
+            ))
+            fig.add_trace(go.Scatter(
+                x=[frame_idx], y=[currents_norm[frame_idx]],
+                mode="markers",
+                marker=dict(size=9, color="#f43f5e"),
+                showlegend=False
+            ))
+            fig.add_hline(y=1.0, line_dash="dash", line_color="rgba(255,255,255,0.25)")
+            fig.update_layout(
+                paper_bgcolor="#071628",
+                plot_bgcolor="#071628",
+                margin=dict(l=10, r=10, t=10, b=10),
+                height=300,
+                xaxis=dict(title="Frame", color="#94a3b8", showgrid=False),
+                yaxis=dict(
+                    title="Normalized current",
+                    color="#94a3b8",
+                    range=[max(0.65, np.min(currents_norm) - 0.02), 1.02],
+                    showgrid=True,
+                    gridcolor="rgba(255,255,255,0.06)"
+                ),
+                showlegend=False
+            )
+            return fig
+
+        if "flow_running" not in st.session_state:
+            st.session_state.flow_running = False
+        if "flow_frame" not in st.session_state:
+            st.session_state.flow_frame = 0
+
+        left, right = st.columns([1.7, 1])
+        with left:
+            flow_scene_slot = st.empty()
+        with right:
+            flow_trace_slot = st.empty()
+            flow_metric_slot = st.empty()
+
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("▶ Run flow", key="flow_run"):
+                st.session_state.flow_running = True
+                st.session_state.flow_frame = 0
+                st.rerun()
+        with b2:
+            if st.button("⏸ Stop flow", key="flow_stop"):
+                st.session_state.flow_running = False
+        with b3:
+            if st.button("↺ Reset", key="flow_reset"):
+                st.session_state.flow_running = False
+                st.session_state.flow_frame = 0
+                st.rerun()
+
+        frame_idx = min(st.session_state.flow_frame, frames - 1)
+        flow_scene_slot.plotly_chart(
+            build_flow_scene(frame_idx),
+            use_container_width=True,
+            config={"displayModeBar": False},
+            key=f"flow_scene_{frame_idx}"
+        )
+        flow_trace_slot.plotly_chart(
+            build_flow_trace(frame_idx),
+            use_container_width=True,
+            config={"displayModeBar": False},
+            key=f"flow_trace_{frame_idx}"
+        )
+
+        flow_metric_slot.markdown(
+            f"**I₀ = {i0_nA:.2f} nA**  |  "
+            f"**I = {currents_nA[frame_idx]:.2f} nA**  |  "
+            f"**ΔI = {deltaI_pA[frame_idx]:.0f} pA**  |  "
+            f"**Particles = {n_particles}**"
+        )
+
+        if st.session_state.flow_running:
+            time.sleep(max(0.03, 0.08 / speed))
+            st.session_state.flow_frame += 1
+            if st.session_state.flow_frame >= frames:
+                st.session_state.flow_frame = 0
             st.rerun()

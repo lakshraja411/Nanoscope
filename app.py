@@ -423,13 +423,10 @@ if page == "Size Calculator":
 # TAB 2: Current Drop (ΔI)
 # =========================
 if page == "ΔI Range Explorer":
-    
+
     st.subheader("ΔI Range Explorer")
 
-    import numpy as np
-    import pandas as pd
-
-    # ---------- Core equations from your screenshot ----------
+    # ---------- Core equations ----------
     def pore_d_from_i0(i0_A, L_m, V_V, sigma_Sm):
         # d = (i0 + sqrt(i0*(i0 + 16 L V sigma/pi))) / (2 V sigma)
         term = i0_A + (16.0 * L_m * V_V * sigma_Sm) / np.pi
@@ -448,6 +445,7 @@ if page == "ΔI Range Explorer":
         d_withbio = np.sqrt(inside)
         i_withbio = i_from_d(d_withbio, L_m, V_V, sigma_Sm)
         return i0_A - i_withbio  # A
+
     def circle_overlap_area(R, r, x):
         """
         Overlap area between two circles:
@@ -459,11 +457,11 @@ if page == "ΔI Range Explorer":
         # no overlap
         if x >= R + r:
             return 0.0
-    
+
         # one fully inside the other
         if x <= abs(R - r):
             return np.pi * min(R, r)**2
-    
+
         # partial overlap
         term1 = r**2 * np.arccos((x**2 + r**2 - R**2) / (2 * x * r))
         term2 = R**2 * np.arccos((x**2 + R**2 - r**2) / (2 * x * R))
@@ -475,7 +473,6 @@ if page == "ΔI Range Explorer":
         )
         return term1 + term2 - term3
 
-
     def dbio_from_blocked_area(A_blocked):
         """
         Convert blocked area to equivalent circular blocking diameter.
@@ -485,13 +482,13 @@ if page == "ΔI Range Explorer":
             return 0.0
         return 2.0 * np.sqrt(A_blocked / np.pi)
 
-
     def delta_i_from_blocked_area(i0_A, d_m, L_m, V_V, sigma_Sm, A_blocked):
         """
         Compute ΔI from blocked overlap area directly.
         """
         dbio_eff = dbio_from_blocked_area(A_blocked)
         return delta_i(i0_A, d_m, L_m, V_V, sigma_Sm, dbio_eff)
+
     def summarize(values):
         values = np.asarray(values)
         values = values[np.isfinite(values)]
@@ -517,7 +514,7 @@ if page == "ΔI Range Explorer":
     with col2:
         L_nm = st.number_input("Pore length L (nm)", value=7.0, step=0.5)
         occupancy = st.slider("Occupancy factor (0.3–1.0)", 0.3, 1.0, 1.0, 0.05)
-        st.caption("Occupancy scales dbio_eff down to mimic shallow/off-axis events.")
+        st.caption("Occupancy scales the effective blocker size; overlap geometry models bumps and adsorption.")
 
     i0_A = i0_nA * 1e-9
     L_m = L_nm * 1e-9
@@ -544,102 +541,99 @@ if page == "ΔI Range Explorer":
             if np.isfinite(di):
                 st.success(f"ΔI ≈ **{di*1e12:.0f} pA**  (fractional blockade ≈ {di/i0_A:.3f})")
             else:
-                st.error("This dbio is too large for the inferred pore diameter (d_withbio becomes imaginary).")
+                st.error("This dbio is too large for the inferred pore diameter.")
 
     # ---------- Model B: Ellipsoid ----------
     elif model.startswith("Ellipsoid"):
-        
+
         A_nm = st.number_input("Axis A (nm) (long)", value=14.0, step=0.5)
         B_nm = st.number_input("Axis B (nm)", value=4.0, step=0.5)
         C_nm = st.number_input("Axis C (nm)", value=4.0, step=0.5)
         N = int(st.number_input("Orientation samples", value=50000, step=5000))
         seed = int(st.number_input("Random seed", value=7, step=1))
 
+        event_model = st.selectbox(
+            "Event model",
+            ["Centered translocation", "Bump / partial entry", "Adsorption / rim interaction"]
+        )
+
         def random_unit_vectors(N, rng):
             u = rng.random(N)
             v = rng.random(N)
-            theta = 2*np.pi*u
-            z = 2*v - 1
+            theta = 2 * np.pi * u
+            z = 2 * v - 1
             r = np.sqrt(1 - z**2)
-            x = r*np.cos(theta)
-            y = r*np.sin(theta)
+            x = r * np.cos(theta)
+            y = r * np.sin(theta)
             return np.stack([x, y, z], axis=1)
 
         def projected_area_ellipsoid(a, b, c, nvec):
-            nx, ny, nz = nvec[:,0], nvec[:,1], nvec[:,2]
-            denom = np.sqrt((a*nx)**2 + (b*ny)**2 + (c*nz)**2)
-            return (np.pi * a*b*c) / denom  # m^2
+            nx, ny, nz = nvec[:, 0], nvec[:, 1], nvec[:, 2]
+            denom = np.sqrt((a * nx)**2 + (b * ny)**2 + (c * nz)**2)
+            return (np.pi * a * b * c) / denom  # m^2
 
         if st.button("Compute ΔI range (ellipsoid)"):
 
             rng = np.random.default_rng(seed)
-    
+
             # semi-axes (m)
             a = (A_nm / 2) * 1e-9
             b = (B_nm / 2) * 1e-9
             c = (C_nm / 2) * 1e-9
-        
+
             pore_radius = d_m / 2.0
-        
+
             nvec = random_unit_vectors(N, rng)
             Aproj = projected_area_ellipsoid(a, b, c, nvec)  # m^2
             dbio_eff = 2 * np.sqrt(Aproj / np.pi)            # m
             rbio_eff = dbio_eff / 2.0
-        
+
             di_list = []
             offset_list_nm = []
             blocked_area_list_nm2 = []
-        
-            for r_eff, A_eff in zip(rbio_eff, Aproj):
-        
+
+            for r_eff in rbio_eff:
+
                 if event_model == "Centered translocation":
-                    # molecule centered in pore
                     offset = 0.0
-        
+
                 elif event_model == "Bump / partial entry":
-                    # partial overlap: molecule mostly near edge / shallow capture
-                    # choose offset so overlap is weaker on average
-                    # from just touching to moderately inside
                     offset = rng.uniform(
                         max(0.0, pore_radius - 0.3 * r_eff),
                         pore_radius + 0.8 * r_eff
                     )
-        
+
                 else:  # Adsorption / rim interaction
-                    # molecule sits near the pore rim
                     offset = rng.uniform(
                         max(0.0, pore_radius - 0.8 * r_eff),
                         pore_radius + 0.2 * r_eff
                     )
-        
+
                 A_blocked = circle_overlap_area(pore_radius, r_eff * occupancy, offset)
-        
                 di_val = delta_i_from_blocked_area(i0_A, d_m, L_m, V, sigma, A_blocked)
-        
+
                 if np.isfinite(di_val):
                     di_list.append(di_val * 1e12)  # pA
                     offset_list_nm.append(offset * 1e9)
-                    blocked_area_list_nm2.append(A_blocked * 1e18)  # nm^2
-        
+                    blocked_area_list_nm2.append(A_blocked * 1e18)  # nm²
+
             di_pA = np.array(di_list)
             stats = summarize(di_pA)
-        
+
             if stats is None:
                 st.error("No valid events were generated.")
             else:
                 st.success(f"Possible ΔI range: **{stats['min']:.0f} – {stats['max']:.0f} pA**")
                 st.info(f"Typical ΔI range (5–95%): **{stats['p5']:.0f} – {stats['p95']:.0f} pA**")
                 st.caption(f"Valid simulated events: {stats['count']:,} | Median ΔI ≈ {stats['median']:.0f} pA")
-    
-                # optional diagnostics
+
                 diag_df = pd.DataFrame({
                     "ΔI (pA)": di_pA,
                     "offset (nm)": offset_list_nm,
                     "blocked area (nm²)": blocked_area_list_nm2
                 })
                 st.dataframe(diag_df.describe().T, use_container_width=True)
-        
-                # histogram
+
                 hist_counts, hist_edges = np.histogram(di_pA, bins=60)
                 hist_centers = 0.5 * (hist_edges[:-1] + hist_edges[1:])
                 hist_df = pd.DataFrame({
@@ -650,7 +644,7 @@ if page == "ΔI Range Explorer":
 
     # ---------- Model C: Rod / spherocylinder ----------
     else:
-        
+
         Lrod_nm = st.number_input("Rod length L_rod (nm)", value=50.0, step=5.0)
         Drod_nm = st.number_input("Rod diameter D_rod (nm)", value=6.0, step=0.5)
         n_angles = int(st.number_input("Angle steps", value=361, step=60))
@@ -659,14 +653,12 @@ if page == "ΔI Range Explorer":
             Lrod = Lrod_nm * 1e-9
             Drod = Drod_nm * 1e-9
 
-            # θ in [0, π/2]
             theta = np.linspace(0, np.pi/2, n_angles)
 
-            # Approx projected area of spherocylinder:
-            # A(θ) ≈ D*L*sinθ + πD^2/4
+            # Approx projected area of spherocylinder
             Atheta = (Drod * Lrod * np.abs(np.sin(theta))) + (np.pi * Drod**2 / 4.0)
 
-            dbio_eff = 2*np.sqrt(Atheta/np.pi) * occupancy  # m
+            dbio_eff = 2 * np.sqrt(Atheta / np.pi) * occupancy  # m
             di = np.array([delta_i(i0_A, d_m, L_m, V, sigma, x) for x in dbio_eff])
             di_pA = di * 1e12
 
@@ -680,5 +672,3 @@ if page == "ΔI Range Explorer":
 
                 st.write(f"Aligned (θ=0°) ΔI ≈ {di_pA[0]:.0f} pA")
                 st.write(f"Side-on (θ=90°) ΔI ≈ {di_pA[-1]:.0f} pA")
-
-               

@@ -448,7 +448,50 @@ if page == "ΔI Range Explorer":
         d_withbio = np.sqrt(inside)
         i_withbio = i_from_d(d_withbio, L_m, V_V, sigma_Sm)
         return i0_A - i_withbio  # A
+    def circle_overlap_area(R, r, x):
+    """
+    Overlap area between two circles:
+    - pore radius = R
+    - biomolecule effective radius = r
+    - center-to-center offset = x
+    Returns area in m^2
+    """
+    # no overlap
+    if x >= R + r:
+        return 0.0
 
+    # one fully inside the other
+    if x <= abs(R - r):
+        return np.pi * min(R, r)**2
+
+    # partial overlap
+    term1 = r**2 * np.arccos((x**2 + r**2 - R**2) / (2 * x * r))
+    term2 = R**2 * np.arccos((x**2 + R**2 - r**2) / (2 * x * R))
+    term3 = 0.5 * np.sqrt(
+        (-x + r + R) *
+        (x + r - R) *
+        (x - r + R) *
+        (x + r + R)
+    )
+    return term1 + term2 - term3
+
+
+    def dbio_from_blocked_area(A_blocked):
+    """
+    Convert blocked area to equivalent circular blocking diameter.
+    A = pi d^2 / 4  => d = 2 sqrt(A/pi)
+    """
+    if A_blocked <= 0:
+        return 0.0
+    return 2.0 * np.sqrt(A_blocked / np.pi)
+
+
+    def delta_i_from_blocked_area(i0_A, d_m, L_m, V_V, sigma_Sm, A_blocked):
+    """
+    Compute ΔI from blocked overlap area directly.
+    """
+    dbio_eff = dbio_from_blocked_area(A_blocked)
+    return delta_i(i0_A, d_m, L_m, V_V, sigma_Sm, dbio_eff)
     def summarize(values):
         values = np.asarray(values)
         values = values[np.isfinite(values)]
@@ -528,29 +571,82 @@ if page == "ΔI Range Explorer":
             return (np.pi * a*b*c) / denom  # m^2
 
         if st.button("Compute ΔI range (ellipsoid)"):
+
             rng = np.random.default_rng(seed)
-
+    
             # semi-axes (m)
-            a = (A_nm/2) * 1e-9
-            b = (B_nm/2) * 1e-9
-            c = (C_nm/2) * 1e-9
-
+            a = (A_nm / 2) * 1e-9
+            b = (B_nm / 2) * 1e-9
+            c = (C_nm / 2) * 1e-9
+        
+            pore_radius = d_m / 2.0
+        
             nvec = random_unit_vectors(N, rng)
-            Aproj = projected_area_ellipsoid(a, b, c, nvec)
-            dbio_eff = 2*np.sqrt(Aproj/np.pi) * occupancy  # m
-
-            di = np.array([delta_i(i0_A, d_m, L_m, V, sigma, x) for x in dbio_eff])  # A
-            di_pA = di * 1e12
-
+            Aproj = projected_area_ellipsoid(a, b, c, nvec)  # m^2
+            dbio_eff = 2 * np.sqrt(Aproj / np.pi)            # m
+            rbio_eff = dbio_eff / 2.0
+        
+            di_list = []
+            offset_list_nm = []
+            blocked_area_list_nm2 = []
+        
+            for r_eff, A_eff in zip(rbio_eff, Aproj):
+        
+                if event_model == "Centered translocation":
+                    # molecule centered in pore
+                    offset = 0.0
+        
+                elif event_model == "Bump / partial entry":
+                    # partial overlap: molecule mostly near edge / shallow capture
+                    # choose offset so overlap is weaker on average
+                    # from just touching to moderately inside
+                    offset = rng.uniform(
+                        max(0.0, pore_radius - 0.3 * r_eff),
+                        pore_radius + 0.8 * r_eff
+                    )
+        
+                else:  # Adsorption / rim interaction
+                    # molecule sits near the pore rim
+                    offset = rng.uniform(
+                        max(0.0, pore_radius - 0.8 * r_eff),
+                        pore_radius + 0.2 * r_eff
+                    )
+        
+                A_blocked = circle_overlap_area(pore_radius, r_eff * occupancy, offset)
+        
+                di_val = delta_i_from_blocked_area(i0_A, d_m, L_m, V, sigma, A_blocked)
+        
+                if np.isfinite(di_val):
+                    di_list.append(di_val * 1e12)  # pA
+                    offset_list_nm.append(offset * 1e9)
+                    blocked_area_list_nm2.append(A_blocked * 1e18)  # nm^2
+        
+            di_pA = np.array(di_list)
             stats = summarize(di_pA)
+        
             if stats is None:
-                st.error("No valid events (dbio_eff too large relative to pore).")
+                st.error("No valid events were generated.")
             else:
-                
                 st.success(f"Possible ΔI range: **{stats['min']:.0f} – {stats['max']:.0f} pA**")
                 st.info(f"Typical ΔI range (5–95%): **{stats['p5']:.0f} – {stats['p95']:.0f} pA**")
-                st.caption(f"Valid orientations used: {stats['count']:,} | Typical ΔI ≈ {stats['median']:.0f} pA")
-               
+                st.caption(f"Valid simulated events: {stats['count']:,} | Median ΔI ≈ {stats['median']:.0f} pA")
+    
+                # optional diagnostics
+                diag_df = pd.DataFrame({
+                    "ΔI (pA)": di_pA,
+                    "offset (nm)": offset_list_nm,
+                    "blocked area (nm²)": blocked_area_list_nm2
+                })
+                st.dataframe(diag_df.describe().T, use_container_width=True)
+        
+                # histogram
+                hist_counts, hist_edges = np.histogram(di_pA, bins=60)
+                hist_centers = 0.5 * (hist_edges[:-1] + hist_edges[1:])
+                hist_df = pd.DataFrame({
+                    "ΔI center (pA)": hist_centers,
+                    "count": hist_counts
+                })
+                st.line_chart(hist_df.set_index("ΔI center (pA)"))
 
     # ---------- Model C: Rod / spherocylinder ----------
     else:

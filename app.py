@@ -968,8 +968,19 @@ if page == "Live Animation":
         scene_fig = build_scene(frame_idx)
         trace_fig = build_trace(frame_idx)
 
-        scene_slot.plotly_chart(scene_fig, use_container_width=True, config={"displayModeBar": False})
-        trace_slot.plotly_chart(trace_fig, use_container_width=True, config={"displayModeBar": False})
+        scene_slot.plotly_chart(
+            scene_fig,
+            use_container_width=True,
+            config={"displayModeBar": False},
+            key=f"scene_chart_{frame_idx}"
+        )
+
+        trace_slot.plotly_chart(
+            trace_fig,
+            use_container_width=True,
+            config={"displayModeBar": False},
+            key=f"trace_chart_{frame_idx}"
+        )
         metric_slot.markdown(
             f"**I₀ = {i0_nA:.2f} nA**  |  "
             f"**I = {currents[frame_idx] * i0_nA:.2f} nA**  |  "

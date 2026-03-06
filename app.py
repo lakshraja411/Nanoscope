@@ -1,12 +1,13 @@
 import io
+import os
+import time
 import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
-from scipy.optimize import brentq, fsolve
 import plotly.graph_objects as go
-import time
-import os
+from scipy.optimize import brentq, fsolve
+
 st.set_page_config(
     page_title="NanoScope",
     layout="wide",
@@ -16,6 +17,109 @@ st.set_page_config(
 st.title("🔬 NanoScope")
 st.caption("Size and Current Drop Predictor")
 
+# =========================
+# Shared nanopore / geometry functions
+# =========================
+def pore_d_from_i0(i0_A, L_m, V_V, sigma_Sm):
+    """
+    Infer pore diameter from open pore current using:
+    i0 = sigma*V / ( 4L/(pi d^2) + 1/d )
+    """
+    term = i0_A + (16.0 * L_m * V_V * sigma_Sm) / np.pi
+    if i0_A <= 0 or term <= 0 or V_V <= 0 or sigma_Sm <= 0:
+        return np.nan
+    return (i0_A + np.sqrt(i0_A * term)) / (2.0 * V_V * sigma_Sm)
+
+
+def i_from_d(d_m, L_m, V_V, sigma_Sm):
+    denom = (4.0 * L_m) / (np.pi * d_m**2) + (1.0 / d_m)
+    return sigma_Sm * V_V / denom
+
+
+def delta_i(i0_A, d_m, L_m, V_V, sigma_Sm, dbio_m):
+    inside = d_m**2 - dbio_m**2
+    if inside <= 0:
+        return np.nan
+    d_withbio = np.sqrt(inside)
+    i_withbio = i_from_d(d_withbio, L_m, V_V, sigma_Sm)
+    return i0_A - i_withbio  # A
+
+
+def circle_overlap_area(R, r, x):
+    """
+    Overlap area between two circles:
+    R = pore radius
+    r = blocker radius
+    x = center offset
+    """
+    if x >= R + r:
+        return 0.0
+
+    if x <= abs(R - r):
+        return np.pi * min(R, r) ** 2
+
+    term1 = r**2 * np.arccos((x**2 + r**2 - R**2) / (2 * x * r))
+    term2 = R**2 * np.arccos((x**2 + R**2 - r**2) / (2 * x * R))
+    term3 = 0.5 * np.sqrt(
+        (-x + r + R) *
+        (x + r - R) *
+        (x - r + R) *
+        (x + r + R)
+    )
+    return term1 + term2 - term3
+
+
+def dbio_from_blocked_area(A_blocked):
+    if A_blocked <= 0:
+        return 0.0
+    return 2.0 * np.sqrt(A_blocked / np.pi)
+
+
+def delta_i_from_blocked_area(i0_A, d_m, L_m, V_V, sigma_Sm, A_blocked):
+    dbio_eff = dbio_from_blocked_area(A_blocked)
+    return delta_i(i0_A, d_m, L_m, V_V, sigma_Sm, dbio_eff)
+
+
+def summarize(values):
+    values = np.asarray(values)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return None
+    return {
+        "count": int(values.size),
+        "min": float(np.min(values)),
+        "p5": float(np.percentile(values, 5)),
+        "median": float(np.median(values)),
+        "p95": float(np.percentile(values, 95)),
+        "max": float(np.max(values)),
+    }
+
+
+def random_unit_vectors(N, rng):
+    u = rng.random(N)
+    v = rng.random(N)
+    theta = 2 * np.pi * u
+    z = 2 * v - 1
+    r = np.sqrt(1 - z**2)
+    x = r * np.cos(theta)
+    y = r * np.sin(theta)
+    return np.stack([x, y, z], axis=1)
+
+
+def projected_area_ellipsoid(a, b, c, nvec):
+    """
+    nvec: shape (N,3) or (3,)
+    returns projected area(s) in m^2
+    """
+    nvec = np.atleast_2d(nvec)
+    nx, ny, nz = nvec[:, 0], nvec[:, 1], nvec[:, 2]
+    denom = np.sqrt((a * nx)**2 + (b * ny)**2 + (c * nz)**2)
+    return (np.pi * a * b * c) / denom
+
+
+# =========================
+# Navigation
+# =========================
 page = st.sidebar.radio(
     "Navigation",
     [
@@ -25,6 +129,10 @@ page = st.sidebar.radio(
         "Live Animation"
     ]
 )
+
+# =========================
+# Home
+# =========================
 if page == "Home":
 
     st.header("Welcome to NanoScope")
@@ -38,7 +146,7 @@ This tool allows you to:
 • Estimate nanopore size from IV curves  
 • Model blockade current (ΔI) for different biomarker geometries  
 • Explore orientation effects for ellipsoids and rod-like proteins  
-
+• Visualize translocation events with a live animation
 """)
 
     st.subheader("Modules")
@@ -53,9 +161,14 @@ Estimate pore diameter from conductance using CBD or conical models.
 Predict possible current blockade values for biomolecules entering
 the nanopore with different orientations.
 
+**Live Animation**
+
+Animate a translocation/bump/adsorption event with a synchronized
+current trace based on the same blockade model.
 """)
 
     st.info("Developed for nanopore biosensing research.")
+
 # =========================
 # Common: TXT -> clean CSV
 # =========================
@@ -65,6 +178,7 @@ def clean_voltage(v: str) -> float:
         return float(v.replace("m", "")) * 1e-3
     return float(v)
 
+
 def clean_current(i: str) -> float:
     i = str(i).strip()
     if i.endswith("n"):
@@ -72,6 +186,7 @@ def clean_current(i: str) -> float:
     if i.endswith("f"):
         return float(i.replace("f", "")) * 1e-15
     return float(i)
+
 
 def txt_to_iv_clean_df(file_bytes: bytes) -> pd.DataFrame:
     s = file_bytes.decode("utf-8", errors="ignore")
@@ -81,6 +196,7 @@ def txt_to_iv_clean_df(file_bytes: bytes) -> pd.DataFrame:
     out = df[["Sweep #", "Voltage_V", "Current_A"]].copy()
     return out
 
+
 # =========================
 # Common helpers
 # =========================
@@ -88,29 +204,32 @@ def sort_by_voltage(V, I):
     idx = np.argsort(V)
     return V[idx], I[idx]
 
+
 def slope_through_origin(V, I):
     denom = np.sum(V**2)
     if denom <= 0:
         return np.nan
     return np.sum(V * I) / denom
 
+
 def slope_with_intercept(V, I):
     G, b = np.polyfit(V, I, 1)
     return G, b
 
+
 def plot_iv_line(V, I, title="I–V Curve", y_in_nA=True, show_fit=False, fit_G=None):
     V, I = sort_by_voltage(V, I)
-    fig, ax = plt.subplots(figsize=(7,5))
+    fig, ax = plt.subplots(figsize=(7, 5))
     if y_in_nA:
-        ax.plot(V, I*1e9, linewidth=2, label="IV data")
+        ax.plot(V, I * 1e9, linewidth=2, label="IV data")
         ax.set_ylabel("Current (nA)")
         if show_fit and fit_G is not None:
-            ax.plot(V, (fit_G*V)*1e9, linestyle="--", linewidth=2, label="Fit")
+            ax.plot(V, (fit_G * V) * 1e9, linestyle="--", linewidth=2, label="Fit")
     else:
         ax.plot(V, I, linewidth=2, label="IV data")
         ax.set_ylabel("Current (A)")
         if show_fit and fit_G is not None:
-            ax.plot(V, fit_G*V, linestyle="--", linewidth=2, label="Fit")
+            ax.plot(V, fit_G * V, linestyle="--", linewidth=2, label="Fit")
 
     ax.set_xlabel("Voltage (V)")
     ax.set_title(title)
@@ -118,6 +237,7 @@ def plot_iv_line(V, I, title="I–V Curve", y_in_nA=True, show_fit=False, fit_G=
     ax.legend()
     st.pyplot(fig)
     plt.close(fig)
+
 
 def pick_linear_region_auto(V, I, eps=0.005, window=0.05, min_points=6):
     w = window
@@ -143,18 +263,20 @@ def pick_linear_region_auto(V, I, eps=0.005, window=0.05, min_points=6):
 def diameter_cyl_no_access(G_S, sigma_Sm, L_m):
     if G_S <= 0 or sigma_Sm <= 0 or L_m <= 0:
         return np.nan
-    return np.sqrt((4*L_m*G_S)/(sigma_Sm*np.pi))
+    return np.sqrt((4 * L_m * G_S) / (sigma_Sm * np.pi))
+
 
 def diameter_cyl_with_access(G_S, sigma_Sm, L_m):
     if G_S <= 0 or sigma_Sm <= 0 or L_m <= 0:
         return np.nan
     a = (np.pi * sigma_Sm) / G_S
     b = np.pi / 2.0
-    disc = b*b + 4*a*L_m
+    disc = b * b + 4 * a * L_m
     if disc <= 0 or a <= 0:
         return np.nan
-    r = (b + np.sqrt(disc)) / (2*a)
-    return 2*r
+    r = (b + np.sqrt(disc)) / (2 * a)
+    return 2 * r
+
 
 def mc_cyl_diameter(G_nS, dG_nS, sigma, dsigma, L_nm, dL_nm, include_access=True, N=100000, seed=7):
     rng = np.random.default_rng(seed)
@@ -170,7 +292,7 @@ def mc_cyl_diameter(G_nS, dG_nS, sigma, dsigma, L_nm, dL_nm, include_access=True
     if include_access:
         d = np.array([diameter_cyl_with_access(g, s, l) for g, s, l in zip(Gs, ss, Ls)])
     else:
-        d = np.sqrt((4*Ls*Gs)/(ss*np.pi))
+        d = np.sqrt((4 * Ls * Gs) / (ss * np.pi))
 
     d = d[np.isfinite(d) & (d > 0)]
     if d.size < 2000:
@@ -178,21 +300,24 @@ def mc_cyl_diameter(G_nS, dG_nS, sigma, dsigma, L_nm, dL_nm, include_access=True
 
     d_nm = d * 1e9
     mean = float(np.mean(d_nm))
-    std  = float(np.std(d_nm, ddof=1))
+    std = float(np.std(d_nm, ddof=1))
     lo, hi = np.percentile(d_nm, [2.5, 97.5])
     return mean, std, (float(lo), float(hi)), int(d_nm.size)
 
+
 # =========================
-# Conical model (your formula)
+# Conical model
 # =========================
 def G_conical_single(r, K, L, theta):
-    num = 4*np.pi*r*(r + L*np.tan(theta))
-    den = 4*L + np.pi*(2*r + L*np.tan(theta))
-    return K*(num/den)
+    num = 4 * np.pi * r * (r + L * np.tan(theta))
+    den = 4 * L + np.pi * (2 * r + L * np.tan(theta))
+    return K * (num / den)
+
 
 def solve_tip_radius_brentq(G_single, K, L, theta, r_lo=0.5e-9, r_hi=300e-9):
     def f(r):
         return G_conical_single(r, K, L, theta) - G_single
+
     f_lo, f_hi = f(r_lo), f(r_hi)
     if f_lo * f_hi > 0:
         raise ValueError(
@@ -203,10 +328,10 @@ def solve_tip_radius_brentq(G_single, K, L, theta, r_lo=0.5e-9, r_hi=300e-9):
     return brentq(f, r_lo, r_hi, maxiter=2000)
 
 # =========================
-# TAB 1: Size (CBD / Conical)
+# TAB 1: Size Calculator
 # =========================
 if page == "Size Calculator":
-    
+
     st.subheader("1) Upload IV file")
     up = st.file_uploader("Upload .csv or .txt", type=["csv", "txt"], key="iv_upload")
 
@@ -229,14 +354,9 @@ if page == "Size Calculator":
 
     st.markdown("---")
     st.subheader("2) Choose analysis mode")
-    mode = st.radio(
-        "Mode",
-        ["CBD (cylindrical)", "Conical"],
-        horizontal=False
-    )
+    mode = st.radio("Mode", ["CBD (cylindrical)", "Conical"], horizontal=False)
     plot_nA = st.checkbox("Plot current in nA", value=True, key="plot_nA_tab1")
 
-    # ---------- CBD ----------
     if mode.startswith("CBD"):
         st.subheader("CBD cylindrical pore diameter")
 
@@ -274,14 +394,14 @@ if page == "Size Calculator":
         st.markdown("### Inputs (with uncertainties)")
         default_G = float(G_from_iv_nS) if (G_from_iv_nS is not None and np.isfinite(G_from_iv_nS)) else 175.0
 
-        G_nS   = st.number_input("Conductance G (nS)", value=default_G, step=1.0, format="%.3f")
-        dG_nS  = st.number_input("± error in G (nS)", value=1.0, step=0.1, format="%.3f")
+        G_nS = st.number_input("Conductance G (nS)", value=default_G, step=1.0, format="%.3f")
+        dG_nS = st.number_input("± error in G (nS)", value=1.0, step=0.1, format="%.3f")
 
-        sigma  = st.number_input("Conductivity σ (S/m)", value=11.5, step=0.1, format="%.4f")
+        sigma = st.number_input("Conductivity σ (S/m)", value=11.5, step=0.1, format="%.4f")
         dsigma = st.number_input("± error in σ (S/m)", value=0.2, step=0.05, format="%.4f")
 
-        L_nm   = st.number_input("Pore length L (nm)", value=7.0, step=0.5, format="%.3f")
-        dL_nm  = st.number_input("± error in L (nm)", value=0.5, step=0.1, format="%.3f")
+        L_nm = st.number_input("Pore length L (nm)", value=7.0, step=0.5, format="%.3f")
+        dL_nm = st.number_input("± error in L (nm)", value=0.5, step=0.1, format="%.3f")
 
         include_access = st.checkbox("Include access resistance (recommended)", value=True)
         N = st.selectbox("Monte Carlo samples", [20000, 50000, 100000, 200000], index=2)
@@ -298,7 +418,6 @@ if page == "Size Calculator":
                 st.write(f"95% interval: **{lo:.2f} – {hi:.2f} nm**")
                 st.caption(f"Valid MC samples used: {n_ok:,}")
 
-    # ---------- Conical ----------
     else:
         st.subheader("Conical pore (tip radius) from IV")
 
@@ -317,11 +436,7 @@ if page == "Size Calculator":
         theta_deg = st.number_input("Half cone angle θ (deg)", value=12.6, step=0.1, format="%.3f")
         L_nm = st.number_input("Pore length L (nm)", value=750.0, step=5.0, format="%.2f")
 
-        if "1 M" in stage:
-            K_default = 8.97
-        else:
-            K_default = 0.14
-
+        K_default = 8.97 if "1 M" in stage else 0.14
         K = st.number_input("Conductivity K (S/m)", value=float(K_default), step=0.01, format="%.4f")
 
         if df_iv is None:
@@ -399,7 +514,7 @@ if page == "Size Calculator":
                         r = solve_tip_radius_brentq(G_single, K, L, theta)
                         st.success(f"Estimated tip radius r ≈ {r*1e9:.2f} nm")
 
-                else:  # Antibody/biosensing IV
+                else:
                     window = st.number_input("Fit window ±V (V)", value=0.1, step=0.01, format="%.3f")
                     if st.button("Compute r (biosensing IV, polyfit+intercept)"):
                         mask = (V >= -window) & (V <= window)
@@ -421,88 +536,11 @@ if page == "Size Calculator":
                         st.success(f"Estimated tip radius r ≈ {r*1e9:.2f} nm")
 
 # =========================
-# TAB 2: Current Drop (ΔI)
+# TAB 2: ΔI Range Explorer
 # =========================
 if page == "ΔI Range Explorer":
 
     st.subheader("ΔI Range Explorer")
-
-    # ---------- Core equations ----------
-    def pore_d_from_i0(i0_A, L_m, V_V, sigma_Sm):
-        # d = (i0 + sqrt(i0*(i0 + 16 L V sigma/pi))) / (2 V sigma)
-        term = i0_A + (16.0 * L_m * V_V * sigma_Sm) / np.pi
-        if i0_A <= 0 or term <= 0 or V_V <= 0 or sigma_Sm <= 0:
-            return np.nan
-        return (i0_A + np.sqrt(i0_A * term)) / (2.0 * V_V * sigma_Sm)
-
-    def i_from_d(d_m, L_m, V_V, sigma_Sm):
-        denom = (4.0 * L_m) / (np.pi * d_m**2) + (1.0 / d_m)
-        return sigma_Sm * V_V / denom
-
-    def delta_i(i0_A, d_m, L_m, V_V, sigma_Sm, dbio_m):
-        inside = d_m**2 - dbio_m**2
-        if inside <= 0:
-            return np.nan
-        d_withbio = np.sqrt(inside)
-        i_withbio = i_from_d(d_withbio, L_m, V_V, sigma_Sm)
-        return i0_A - i_withbio  # A
-
-    def circle_overlap_area(R, r, x):
-        """
-        Overlap area between two circles:
-        - pore radius = R
-        - biomolecule effective radius = r
-        - center-to-center offset = x
-        Returns area in m^2
-        """
-        # no overlap
-        if x >= R + r:
-            return 0.0
-
-        # one fully inside the other
-        if x <= abs(R - r):
-            return np.pi * min(R, r)**2
-
-        # partial overlap
-        term1 = r**2 * np.arccos((x**2 + r**2 - R**2) / (2 * x * r))
-        term2 = R**2 * np.arccos((x**2 + R**2 - r**2) / (2 * x * R))
-        term3 = 0.5 * np.sqrt(
-            (-x + r + R) *
-            (x + r - R) *
-            (x - r + R) *
-            (x + r + R)
-        )
-        return term1 + term2 - term3
-
-    def dbio_from_blocked_area(A_blocked):
-        """
-        Convert blocked area to equivalent circular blocking diameter.
-        A = pi d^2 / 4  => d = 2 sqrt(A/pi)
-        """
-        if A_blocked <= 0:
-            return 0.0
-        return 2.0 * np.sqrt(A_blocked / np.pi)
-
-    def delta_i_from_blocked_area(i0_A, d_m, L_m, V_V, sigma_Sm, A_blocked):
-        """
-        Compute ΔI from blocked overlap area directly.
-        """
-        dbio_eff = dbio_from_blocked_area(A_blocked)
-        return delta_i(i0_A, d_m, L_m, V_V, sigma_Sm, dbio_eff)
-
-    def summarize(values):
-        values = np.asarray(values)
-        values = values[np.isfinite(values)]
-        if values.size == 0:
-            return None
-        return {
-            "count": int(values.size),
-            "min": float(np.min(values)),
-            "p5": float(np.percentile(values, 5)),
-            "median": float(np.median(values)),
-            "p95": float(np.percentile(values, 95)),
-            "max": float(np.max(values)),
-        }
 
     st.markdown("### Inputs")
     col1, col2 = st.columns(2)
@@ -528,12 +566,8 @@ if page == "ΔI Range Explorer":
 
     st.markdown("---")
     st.markdown("### Choose biomarker shape model")
-    model = st.selectbox(
-        "Model",
-        ["Sphere", "Ellipsoid", "Rod / spherocylinder"]
-    )
+    model = st.selectbox("Model", ["Sphere", "Ellipsoid", "Rod / spherocylinder"])
 
-    # ---------- Model A: Sphere ----------
     if model.startswith("Sphere"):
         dbio_nm = st.number_input("Biomarker diameter d_bio (nm)", value=6.0, step=0.2)
         if st.button("Compute ΔI (sphere)"):
@@ -544,7 +578,6 @@ if page == "ΔI Range Explorer":
             else:
                 st.error("This dbio is too large for the inferred pore diameter.")
 
-    # ---------- Model B: Ellipsoid ----------
     elif model.startswith("Ellipsoid"):
 
         A_nm = st.number_input("Axis A (nm) (long)", value=14.0, step=0.5)
@@ -558,26 +591,9 @@ if page == "ΔI Range Explorer":
             ["Centered translocation", "Bump / partial entry", "Adsorption / rim interaction"]
         )
 
-        def random_unit_vectors(N, rng):
-            u = rng.random(N)
-            v = rng.random(N)
-            theta = 2 * np.pi * u
-            z = 2 * v - 1
-            r = np.sqrt(1 - z**2)
-            x = r * np.cos(theta)
-            y = r * np.sin(theta)
-            return np.stack([x, y, z], axis=1)
-
-        def projected_area_ellipsoid(a, b, c, nvec):
-            nx, ny, nz = nvec[:, 0], nvec[:, 1], nvec[:, 2]
-            denom = np.sqrt((a * nx)**2 + (b * ny)**2 + (c * nz)**2)
-            return (np.pi * a * b * c) / denom  # m^2
-
         if st.button("Compute ΔI range (ellipsoid)"):
 
             rng = np.random.default_rng(seed)
-
-            # semi-axes (m)
             a = (A_nm / 2) * 1e-9
             b = (B_nm / 2) * 1e-9
             c = (C_nm / 2) * 1e-9
@@ -585,8 +601,8 @@ if page == "ΔI Range Explorer":
             pore_radius = d_m / 2.0
 
             nvec = random_unit_vectors(N, rng)
-            Aproj = projected_area_ellipsoid(a, b, c, nvec)  # m^2
-            dbio_eff = 2 * np.sqrt(Aproj / np.pi)            # m
+            Aproj = projected_area_ellipsoid(a, b, c, nvec)
+            dbio_eff = 2 * np.sqrt(Aproj / np.pi)
             rbio_eff = dbio_eff / 2.0
 
             di_list = []
@@ -594,17 +610,14 @@ if page == "ΔI Range Explorer":
             blocked_area_list_nm2 = []
 
             for r_eff in rbio_eff:
-
                 if event_model == "Centered translocation":
                     offset = 0.0
-
                 elif event_model == "Bump / partial entry":
                     offset = rng.uniform(
                         max(0.0, pore_radius - 0.3 * r_eff),
                         pore_radius + 0.8 * r_eff
                     )
-
-                else:  # Adsorption / rim interaction
+                else:
                     offset = rng.uniform(
                         max(0.0, pore_radius - 0.8 * r_eff),
                         pore_radius + 0.2 * r_eff
@@ -614,9 +627,9 @@ if page == "ΔI Range Explorer":
                 di_val = delta_i_from_blocked_area(i0_A, d_m, L_m, V, sigma, A_blocked)
 
                 if np.isfinite(di_val):
-                    di_list.append(di_val * 1e12)  # pA
+                    di_list.append(di_val * 1e12)
                     offset_list_nm.append(offset * 1e9)
-                    blocked_area_list_nm2.append(A_blocked * 1e18)  # nm²
+                    blocked_area_list_nm2.append(A_blocked * 1e18)
 
             di_pA = np.array(di_list)
             stats = summarize(di_pA)
@@ -643,9 +656,7 @@ if page == "ΔI Range Explorer":
                 })
                 st.line_chart(hist_df.set_index("ΔI center (pA)"))
 
-    # ---------- Model C: Rod / spherocylinder ----------
     else:
-
         Lrod_nm = st.number_input("Rod length L_rod (nm)", value=50.0, step=5.0)
         Drod_nm = st.number_input("Rod diameter D_rod (nm)", value=6.0, step=0.5)
         n_angles = int(st.number_input("Angle steps", value=361, step=60))
@@ -655,11 +666,9 @@ if page == "ΔI Range Explorer":
             Drod = Drod_nm * 1e-9
 
             theta = np.linspace(0, np.pi/2, n_angles)
-
-            # Approx projected area of spherocylinder
             Atheta = (Drod * Lrod * np.abs(np.sin(theta))) + (np.pi * Drod**2 / 4.0)
 
-            dbio_eff = 2 * np.sqrt(Atheta / np.pi) * occupancy  # m
+            dbio_eff = 2 * np.sqrt(Atheta / np.pi) * occupancy
             di = np.array([delta_i(i0_A, d_m, L_m, V, sigma, x) for x in dbio_eff])
             di_pA = di * 1e12
 
@@ -670,7 +679,6 @@ if page == "ΔI Range Explorer":
                 st.success(f"Possible ΔI range: **{stats['min']:.0f} – {stats['max']:.0f} pA**")
                 st.info(f"Typical ΔI range (5–95%): **{stats['p5']:.0f} – {stats['p95']:.0f} pA**")
                 st.caption(f"Valid angles used: {stats['count']:,} | Typical ΔI ≈ {stats['median']:.0f} pA")
-
                 st.write(f"Aligned (θ=0°) ΔI ≈ {di_pA[0]:.0f} pA")
                 st.write(f"Side-on (θ=90°) ΔI ≈ {di_pA[-1]:.0f} pA")
 
@@ -736,12 +744,12 @@ if page == "Live Animation":
             y_positions = np.linspace(0.45, -0.05, frames)
             x_positions = np.ones(frames) * 0.16
 
-        angles = np.linspace(0, 2*np.pi, frames)
+        angles = np.linspace(0, 2 * np.pi, frames)
         nvecs = np.array([
             [
-                0.65*np.cos(t),
-                0.30*np.sin(t),
-                np.sqrt(max(0, 1 - (0.65*np.cos(t))**2 - (0.30*np.sin(t))**2))
+                0.65 * np.cos(t),
+                0.30 * np.sin(t),
+                np.sqrt(max(0, 1 - (0.65 * np.cos(t))**2 - (0.30 * np.sin(t))**2))
             ]
             for t in angles
         ])
@@ -752,7 +760,7 @@ if page == "Live Animation":
 
         for i in range(frames):
             nvec = nvecs[i]
-            Aproj = projected_area_ellipsoid(a, b, c, nvec.reshape(1, 3))[0]
+            Aproj = projected_area_ellipsoid(a, b, c, nvec)[0]
             dbio_eff = 2 * np.sqrt(Aproj / np.pi)
             rbio_eff = 0.5 * dbio_eff * occupancy
 
@@ -772,7 +780,7 @@ if page == "Live Animation":
                 di = 0.0
 
             I_now = i0_A - di
-            currents.append(I_now / i0_A)   # normalized current
+            currents.append(I_now / i0_A)
             deltaI_pA.append(di * 1e12)
             blocked_areas_nm2.append(A_blocked * 1e18)
 
@@ -805,7 +813,6 @@ if page == "Live Animation":
             fig.add_shape(type="rect", x0=-1, x1=1, y0=0.10, y1=0.16,
                           fillcolor=glow_color, line=dict(width=0))
 
-            # pore opening
             fig.add_shape(type="rect", x0=-0.035, x1=0.035, y0=-0.16, y1=0.16,
                           fillcolor="#0a1730", line=dict(width=0))
             fig.add_shape(type="rect", x0=-0.020, x1=0.020, y0=-0.16, y1=0.16,
@@ -833,7 +840,6 @@ if page == "Live Animation":
                 marker=dict(size=20, color="#8b5cf6", opacity=0.90),
                 hoverinfo="skip"
             ))
-
             return fig
 
         def build_trace(frame_idx):
@@ -901,7 +907,7 @@ if page == "Live Animation":
         trace_slot.plotly_chart(trace_fig, use_container_width=True, config={"displayModeBar": False})
         metric_slot.markdown(
             f"**I₀ = {i0_nA:.2f} nA**  |  "
-            f"**I = {currents[0]*i0_nA:.2f} nA**  |  "
+            f"**I = {currents[0] * i0_nA:.2f} nA**  |  "
             f"**ΔI = {deltaI_pA[0]:.0f} pA**"
         )
 
@@ -912,15 +918,36 @@ if page == "Live Animation":
             save_current_png = st.button("Save current frame as PNG")
         with col_save2:
             run_anim = st.button("Run animation")
-
-        if save_current_png:
+        
+      if save_current_png:
             try:
-                scene_fig.write_image("nanopore_scene_frame.png", scale=2)
-                trace_fig.write_image("current_trace_frame.png", scale=2)
-                st.success("Saved PNGs: nanopore_scene_frame.png and current_trace_frame.png")
-            except Exception as e:
-                st.error(f"Could not save PNG. Install kaleido with: pip install kaleido. Error: {e}")
+                scene_bytes = scene_fig.to_image(format="png", scale=2)
+                trace_bytes = trace_fig.to_image(format="png", scale=2)
 
+                st.success("PNG images generated. Use the buttons below to download them.")
+
+                dl1, dl2 = st.columns(2)
+                with dl1:
+                    st.download_button(
+                        label="Download nanopore scene PNG",
+                        data=scene_bytes,
+                        file_name="nanopore_scene_frame.png",
+                        mime="image/png"
+                    )
+                with dl2:
+                    st.download_button(
+                        label="Download current trace PNG",
+                        data=trace_bytes,
+                        file_name="current_trace_frame.png",
+                        mime="image/png"
+                    )
+        
+            except Exception as e:
+                st.error(
+                    "Could not generate PNG downloads. "
+                    "Install kaleido with: pip install kaleido. "
+                    f"Error: {e}"
+                )
         if run_anim:
             for i in range(frames):
                 scene_fig = build_scene(i)
@@ -930,7 +957,7 @@ if page == "Live Animation":
                 trace_slot.plotly_chart(trace_fig, use_container_width=True, config={"displayModeBar": False})
                 metric_slot.markdown(
                     f"**I₀ = {i0_nA:.2f} nA**  |  "
-                    f"**I = {currents[i]*i0_nA:.2f} nA**  |  "
+                    f"**I = {currents[i] * i0_nA:.2f} nA**  |  "
                     f"**ΔI = {deltaI_pA[i]:.0f} pA**"
                 )
                 time.sleep(max(0.01, 0.04 / speed))

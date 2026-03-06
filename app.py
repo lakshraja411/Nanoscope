@@ -911,54 +911,78 @@ if page == "Live Animation":
             f"**ΔI = {deltaI_pA[0]:.0f} pA**"
         )
 
-        st.markdown("### Save / Export")
-        col_save1, col_save2 = st.columns(2)
+                st.markdown("### Save / Export / Animation")
 
-        with col_save1:
-            save_current_png = st.button("Save current frame as PNG")
-        with col_save2:
-            run_anim = st.button("Run animation")
-        
-    if save_current_png:
-        try:
-            scene_bytes = scene_fig.to_image(format="png", scale=2)
-            trace_bytes = trace_fig.to_image(format="png", scale=2)
-    
-            st.success("PNG images generated. Use the buttons below to download them.")
-    
-            dl1, dl2 = st.columns(2)
-            with dl1:
-                st.download_button(
-                    label="Download nanopore scene PNG",
-                    data=scene_bytes,
-                    file_name="nanopore_scene_frame.png",
-                    mime="image/png"
-                )
-            with dl2:
-                st.download_button(
-                    label="Download current trace PNG",
-                    data=trace_bytes,
-                    file_name="current_trace_frame.png",
-                    mime="image/png"
-                )
-            
-        except Exception as e:
-            st.error(
-                    "Could not generate PNG downloads. "
-                    "Install kaleido with: pip install kaleido. "
-                    f"Error: {e}"
-                )
-                
-        if run_anim:
-            for i in range(frames):
-                scene_fig = build_scene(i)
-                trace_fig = build_trace(i)
+        if "anim_running" not in st.session_state:
+            st.session_state.anim_running = False
+        if "anim_frame" not in st.session_state:
+            st.session_state.anim_frame = 0
 
-                scene_slot.plotly_chart(scene_fig, use_container_width=True, config={"displayModeBar": False})
-                trace_slot.plotly_chart(trace_fig, use_container_width=True, config={"displayModeBar": False})
-                metric_slot.markdown(
-                    f"**I₀ = {i0_nA:.2f} nA**  |  "
-                    f"**I = {currents[i] * i0_nA:.2f} nA**  |  "
-                    f"**ΔI = {deltaI_pA[i]:.0f} pA**"
-                )
-                time.sleep(max(0.01, 0.04 / speed))
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
+
+        with col_btn1:
+            if st.button("▶ Run animation"):
+                st.session_state.anim_running = True
+                st.session_state.anim_frame = 0
+                st.rerun()
+
+        with col_btn2:
+            if st.button("⏸ Stop animation"):
+                st.session_state.anim_running = False
+
+        with col_btn3:
+            if st.button("💾 Generate PNG downloads"):
+                try:
+                    scene_bytes = scene_fig.to_image(format="png", scale=2)
+                    trace_bytes = trace_fig.to_image(format="png", scale=2)
+
+                    st.success("PNG images generated. Use the buttons below to download them.")
+
+                    dl1, dl2 = st.columns(2)
+
+                    with dl1:
+                        st.download_button(
+                            label="Download nanopore scene PNG",
+                            data=scene_bytes,
+                            file_name="nanopore_scene_frame.png",
+                            mime="image/png"
+                        )
+
+                    with dl2:
+                        st.download_button(
+                            label="Download current trace PNG",
+                            data=trace_bytes,
+                            file_name="current_trace_frame.png",
+                            mime="image/png"
+                        )
+
+                except Exception as e:
+                    st.error(
+                        "Could not generate PNG downloads. "
+                        "Install kaleido with: pip install kaleido. "
+                        f"Error: {e}"
+                    )
+
+        # ---- frame display ----
+        frame_idx = st.session_state.anim_frame
+        scene_fig = build_scene(frame_idx)
+        trace_fig = build_trace(frame_idx)
+
+        scene_slot.plotly_chart(scene_fig, use_container_width=True, config={"displayModeBar": False})
+        trace_slot.plotly_chart(trace_fig, use_container_width=True, config={"displayModeBar": False})
+        metric_slot.markdown(
+            f"**I₀ = {i0_nA:.2f} nA**  |  "
+            f"**I = {currents[frame_idx] * i0_nA:.2f} nA**  |  "
+            f"**ΔI = {deltaI_pA[frame_idx]:.0f} pA**"
+        )
+
+        # ---- auto-advance animation ----
+        if st.session_state.anim_running:
+            time.sleep(max(0.03, 0.08 / speed))
+            st.session_state.anim_frame += 1
+
+            if st.session_state.anim_frame >= frames:
+                st.session_state.anim_frame = 0
+                st.session_state.anim_running = False
+
+            st.rerun()

@@ -755,7 +755,7 @@ if page == "ΔI Range Explorer":
             dbio_m = dbio_nm * 1e-9 * occupancy
             di = delta_i(i0_A, d_m, L_m, V, sigma, dbio_m)
             if np.isfinite(di):
-                st.success(f"ΔI ≈ **{di*1e12:.0f} pA**  (fractional blockade ≈ {di/i0_A:.3f})")
+                st.success(f"ΔI ≈ **{di*1e12:.0f} pA**")
             else:
                 st.error("This dbio is too large for the inferred pore diameter.")
 

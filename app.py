@@ -774,7 +774,7 @@ if page == "ΔI Range Explorer":
 
         st.markdown("### Noise model")
         add_noise = st.checkbox("Add Gaussian measurement noise", value=True)
-        noise_pA = st.slider("Noise SD (pA)", 0.0, 200.0, 20.0, 1.0)
+        noise_pA = st.slider("Noise SD (pA)", 0.0, 1000.0, 20.0, 1.0)
         plot_mode = st.selectbox(
             "Histogram view",
             ["Noisy only", "Theoretical only", "Both"]

@@ -127,7 +127,6 @@ page = st.sidebar.radio(
         "Home",
         "Size Calculator",
         "ΔI Range Explorer",
-        
     ]
 )
 
@@ -262,6 +261,8 @@ def pick_linear_region_auto(V, I, eps=0.005, window=0.05, min_points=6):
                 "Couldn't find enough points in a near-zero linear window.\n"
                 "Try increasing window, lowering min_points, or use a global fit."
             )
+
+
 def _to_px(x, y, W=1400, H=700):
     """
     Convert scene coordinates:
@@ -310,7 +311,6 @@ def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0
     scene_w = scene_x1 - scene_x0
     scene_h = scene_y1 - scene_y0
 
-    # membrane slabs
     def scene_map(x, y):
         px, py = _to_px(x, y, W=scene_w, H=scene_h)
         return scene_x0 + px, scene_y0 + py
@@ -437,6 +437,7 @@ def generate_gif_bytes(y_positions, x_positions, currents, deltaI_pA, i0_nA,
     )
     buf.seek(0)
     return buf.getvalue()
+
 # =========================
 # CBD cylindrical size + MC uncertainty
 # =========================
@@ -771,6 +772,14 @@ if page == "ΔI Range Explorer":
             ["Centered translocation", "Bump / partial entry", "Adsorption / rim interaction"]
         )
 
+        st.markdown("### Noise model")
+        add_noise = st.checkbox("Add Gaussian measurement noise", value=True)
+        noise_pA = st.slider("Noise SD (pA)", 0.0, 200.0, 20.0, 1.0)
+        plot_mode = st.selectbox(
+            "Histogram view",
+            ["Noisy only", "Theoretical only", "Both"]
+        )
+
         if st.button("Compute ΔI range (ellipsoid)"):
 
             rng = np.random.default_rng(seed)
@@ -811,7 +820,20 @@ if page == "ΔI Range Explorer":
                     offset_list_nm.append(offset * 1e9)
                     blocked_area_list_nm2.append(A_blocked * 1e18)
 
-            di_pA = np.array(di_list)
+            di_pA_theory = np.array(di_list)
+
+            if add_noise and noise_pA > 0:
+                di_pA_noisy = di_pA_theory + rng.normal(0.0, noise_pA, size=len(di_pA_theory))
+            else:
+                di_pA_noisy = di_pA_theory.copy()
+
+            if plot_mode == "Theoretical only":
+                di_pA = di_pA_theory
+            elif plot_mode == "Noisy only":
+                di_pA = di_pA_noisy
+            else:
+                di_pA = di_pA_noisy
+
             stats = summarize(di_pA)
 
             if stats is None:
@@ -822,19 +844,43 @@ if page == "ΔI Range Explorer":
                 st.caption(f"Valid simulated events: {stats['count']:,} | Median ΔI ≈ {stats['median']:.0f} pA")
 
                 diag_df = pd.DataFrame({
-                    "ΔI (pA)": di_pA,
+                    "ΔI_theory (pA)": di_pA_theory,
+                    "ΔI_noisy (pA)": di_pA_noisy,
                     "offset (nm)": offset_list_nm,
                     "blocked area (nm²)": blocked_area_list_nm2
                 })
                 st.dataframe(diag_df.describe().T, use_container_width=True)
 
-                hist_counts, hist_edges = np.histogram(di_pA, bins=60)
-                hist_centers = 0.5 * (hist_edges[:-1] + hist_edges[1:])
-                hist_df = pd.DataFrame({
-                    "ΔI center (pA)": hist_centers,
-                    "count": hist_counts
-                })
-                st.line_chart(hist_df.set_index("ΔI center (pA)"))
+                fig, ax = plt.subplots(figsize=(7, 5))
+
+                if plot_mode in ["Theoretical only", "Both"]:
+                    ax.hist(
+                        di_pA_theory,
+                        bins=60,
+                        alpha=0.55 if plot_mode == "Both" else 0.85,
+                        label="Theoretical ΔI"
+                    )
+
+                if plot_mode in ["Noisy only", "Both"]:
+                    ax.hist(
+                        di_pA_noisy,
+                        bins=60,
+                        alpha=0.55 if plot_mode == "Both" else 0.85,
+                        label="Noisy ΔI"
+                    )
+
+                ax.set_xlabel("ΔI (pA)")
+                ax.set_ylabel("Count")
+                ax.set_title("Predicted ΔI Histogram")
+                ax.grid(True, alpha=0.3)
+                ax.legend()
+                st.pyplot(fig)
+                plt.close(fig)
+
+                if add_noise and noise_pA > 0:
+                    st.caption(
+                        "Gaussian noise is added after the geometric ΔI simulation to mimic experimental broadening."
+                    )
 
     else:
         Lrod_nm = st.number_input("Rod length L_rod (nm)", value=50.0, step=5.0)
@@ -861,4 +907,3 @@ if page == "ΔI Range Explorer":
                 st.caption(f"Valid angles used: {stats['count']:,} | Typical ΔI ≈ {stats['median']:.0f} pA")
                 st.write(f"Aligned (θ=0°) ΔI ≈ {di_pA[0]:.0f} pA")
                 st.write(f"Side-on (θ=90°) ΔI ≈ {di_pA[-1]:.0f} pA")
-

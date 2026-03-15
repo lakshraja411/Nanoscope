@@ -568,7 +568,7 @@ if page == "ΔI Range Explorer":
         )
 
         show_component_curves = st.checkbox("Show component smooth curves", value=True)
-        kde_bandwidth = st.slider("Smoothness (KDE bandwidth factor)", 0.3, 2.0, 1.0, 0.1)
+        kde_bandwidth = st.slider("Smoothness (KDE bandwidth factor)", 0.05, 2.0, 1.0, 0.05)
 
         if st.button("Compute ΔI range (ellipsoid)"):
             rng = np.random.default_rng(seed)

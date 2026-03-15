@@ -728,37 +728,42 @@ if page == "ΔI Range Explorer":
                     y_total_noisy = kde_curve(di_noisy_all)
                     ax.plot(x_grid, y_total_noisy, linewidth=2.5, label="Total noisy fit")
 
-                # component curves
+                                # weighted component curves
                 if show_component_curves:
-                    comp_map = []
                     if hist_source == "Theoretical prediction":
                         comp_map = [
                             ("Centered component", di_centered),
                             ("Bump component", di_bump),
                             ("Adsorption component", di_ads),
                         ]
+                        total_len = len(di_theory_all)
+
                     elif hist_source == "Noisy prediction":
                         comp_map = [
                             ("Centered component", di_centered_noisy),
                             ("Bump component", di_bump_noisy),
                             ("Adsorption component", di_ads_noisy),
                         ]
+                        total_len = len(di_noisy_all)
+
                     else:
                         comp_map = [
                             ("Centered component", di_centered_noisy),
                             ("Bump component", di_bump_noisy),
                             ("Adsorption component", di_ads_noisy),
                         ]
+                        total_len = len(di_noisy_all)
 
                     for label, comp_data in comp_map:
-                        if len(comp_data) > 1:
+                        if len(comp_data) > 1 and total_len > 0:
+                            weight = len(comp_data) / total_len
                             y_comp = kde_curve(comp_data)
                             ax.plot(
                                 x_grid,
-                                y_comp,
+                                weight * y_comp,
                                 linestyle="--",
                                 linewidth=2,
-                                label=label
+                                label=f"{label} (weighted)"
                             )
 
                 ax.set_xlabel("ΔI (pA)")

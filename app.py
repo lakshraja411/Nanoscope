@@ -284,25 +284,19 @@ def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0
     img = Image.new("RGB", (W, H), (10, 23, 48))
     draw = ImageDraw.Draw(img)
 
-    # Layout
     left_w = int(W * 0.62)
     right_w = W - left_w
     pad = 24
 
-    # Panels
     panel_bg = (12, 24, 46)
     border = (55, 130, 210)
 
     draw.rounded_rectangle((pad, pad, left_w - pad, H - pad), radius=24, fill=panel_bg, outline=border, width=2)
     draw.rounded_rectangle((left_w + pad, pad, W - pad, H - pad), radius=24, fill=panel_bg, outline=border, width=2)
 
-    # Titles
     draw.text((pad + 18, pad + 12), "Nanopore translocation", fill=(220, 235, 255))
     draw.text((left_w + pad + 18, pad + 12), "Current vs time", fill=(220, 235, 255))
 
-    # -------------------------
-    # Left panel: nanopore scene
-    # -------------------------
     scene_x0 = pad + 10
     scene_y0 = pad + 45
     scene_x1 = left_w - pad - 10
@@ -315,7 +309,6 @@ def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0
         px, py = _to_px(x, y, W=scene_w, H=scene_h)
         return scene_x0 + px, scene_y0 + py
 
-    # membrane glow
     xL, yT = scene_map(-1, 0.16)
     xR, yB = scene_map(1, 0.10)
     draw.rectangle((xL, yT, xR, yB), fill=(70, 180, 220))
@@ -324,12 +317,10 @@ def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0
     xR, yB = scene_map(1, -0.16)
     draw.rectangle((xL, yT, xR, yB), fill=(70, 180, 220))
 
-    # membrane body
     xL, yT = scene_map(-1, 0.10)
     xR, yB = scene_map(1, -0.10)
     draw.rectangle((xL, yT, xR, yB), fill=(50, 110, 180))
 
-    # pore opening
     xL, yT = scene_map(-0.035, 0.16)
     xR, yB = scene_map(0.035, -0.16)
     draw.rectangle((xL, yT, xR, yB), fill=(10, 23, 48))
@@ -338,15 +329,12 @@ def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0
     xR, yB = scene_map(0.020, -0.16)
     draw.rectangle((xL, yT, xR, yB), fill=(34, 211, 238))
 
-    # moving analyte
     x = float(x_positions[frame_idx])
     y = float(y_positions[frame_idx])
     cx, cy = scene_map(x, y)
 
-    # glow
     r1 = 26
     draw.ellipse((cx - r1, cy - r1, cx + r1, cy + r1), fill=(139, 92, 246))
-    # core
     r2 = 14
     draw.ellipse((cx - r2, cy - r2, cx + r2, cy + r2), fill=(190, 140, 255))
 
@@ -361,19 +349,14 @@ def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0
         tx, ty = scene_map(-0.88, -1.05)
         draw.text((tx, ty), "-", fill=(100, 170, 255))
 
-    # -------------------------
-    # Right panel: current trace
-    # -------------------------
     plot_x0 = left_w + pad + 20
     plot_y0 = pad + 60
     plot_x1 = W - pad - 20
     plot_y1 = H - pad - 40
 
-    # axes
     draw.line((plot_x0, plot_y1, plot_x1, plot_y1), fill=(120, 140, 165), width=2)
     draw.line((plot_x0, plot_y0, plot_x0, plot_y1), fill=(120, 140, 165), width=2)
 
-    # y-range
     y_min, y_max = 0.75, 1.02
 
     def trace_map(t, val, tmax):
@@ -381,21 +364,16 @@ def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0
         py = plot_y1 - int(((val - y_min) / (y_max - y_min)) * (plot_y1 - plot_y0))
         return px, py
 
-    # I0 dashed line
     i0_y = trace_map(0, 1.0, len(currents) - 1)[1]
     for xx in range(plot_x0, plot_x1, 16):
         draw.line((xx, i0_y, min(xx + 8, plot_x1), i0_y), fill=(180, 180, 180), width=1)
 
-    # trace line
     pts = [trace_map(i, currents[i], len(currents) - 1) for i in range(frame_idx + 1)]
     if len(pts) > 1:
         draw.line(pts, fill=(56, 189, 248), width=4)
 
-    # current point
     px, py = trace_map(frame_idx, currents[frame_idx], len(currents) - 1)
     draw.ellipse((px - 6, py - 6, px + 6, py + 6), fill=(244, 63, 94))
-
-    # delta I vertical
     draw.line((px, py, px, i0_y), fill=(244, 63, 94), width=2)
 
     if show_labels:
@@ -403,7 +381,6 @@ def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0
         draw.text((px + 8, py - 18), "I", fill=(255, 170, 180))
         draw.text((px + 10, (py + i0_y) // 2), "dI", fill=(255, 170, 180))
 
-    # metrics
     metrics = f"I0 = {i0_nA:.2f} nA   |   I = {currents[frame_idx] * i0_nA:.2f} nA   |   ΔI = {deltaI_pA[frame_idx]:.0f} pA"
     draw.text((left_w + pad + 18, H - pad - 26), metrics, fill=(180, 210, 255))
 
@@ -412,10 +389,6 @@ def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0
 
 def generate_gif_bytes(y_positions, x_positions, currents, deltaI_pA, i0_nA,
                        speed=1.4, show_labels=True, step=2):
-    """
-    Generate GIF bytes from frames.
-    step=2 means use every 2nd frame to keep file size sensible.
-    """
     frames = []
     for idx in range(0, len(currents), step):
         frame = build_gif_frame(
@@ -749,6 +722,7 @@ if page == "ΔI Range Explorer":
     st.markdown("### Choose biomarker shape model")
     model = st.selectbox("Model", ["Sphere", "Ellipsoid", "Rod / spherocylinder"])
 
+    # ---------- Sphere ----------
     if model.startswith("Sphere"):
         dbio_nm = st.number_input("Biomarker diameter d_bio (nm)", value=6.0, step=0.2)
         if st.button("Compute ΔI (sphere)"):
@@ -759,6 +733,7 @@ if page == "ΔI Range Explorer":
             else:
                 st.error("This dbio is too large for the inferred pore diameter.")
 
+    # ---------- Ellipsoid ----------
     elif model.startswith("Ellipsoid"):
 
         A_nm = st.number_input("Axis A (nm) (long)", value=14.0, step=0.5)
@@ -767,10 +742,35 @@ if page == "ΔI Range Explorer":
         N = int(st.number_input("Orientation samples", value=50000, step=5000))
         seed = int(st.number_input("Random seed", value=7, step=1))
 
-        event_model = st.selectbox(
+        event_mode = st.selectbox(
             "Event model",
-            ["Centered translocation", "Bump / partial entry", "Adsorption / rim interaction"]
+            [
+                "Centered translocation",
+                "Bump / partial entry",
+                "Adsorption / rim interaction",
+                "Combined mixture"
+            ]
         )
+
+        if event_mode == "Combined mixture":
+            st.markdown("### Event mixture weights")
+
+            mix_centered = st.slider("Centered fraction", 0.0, 1.0, 0.4, 0.05)
+            mix_bump = st.slider("Bump fraction", 0.0, 1.0, 0.4, 0.05)
+            mix_ads = st.slider("Adsorption fraction", 0.0, 1.0, 0.2, 0.05)
+
+            mix_total = mix_centered + mix_bump + mix_ads
+            if mix_total > 0:
+                w_centered = mix_centered / mix_total
+                w_bump = mix_bump / mix_total
+                w_ads = mix_ads / mix_total
+            else:
+                w_centered, w_bump, w_ads = 1.0, 0.0, 0.0
+
+            st.caption(
+                f"Normalized weights: centered = {w_centered:.2f}, "
+                f"bump = {w_bump:.2f}, adsorption = {w_ads:.2f}"
+            )
 
         st.markdown("### Noise model")
         add_noise = st.checkbox("Add Gaussian measurement noise", value=True)
@@ -795,18 +795,36 @@ if page == "ΔI Range Explorer":
             rbio_eff = dbio_eff / 2.0
 
             di_list = []
+            di_centered = []
+            di_bump = []
+            di_ads = []
+
             offset_list_nm = []
             blocked_area_list_nm2 = []
+            event_labels = []
 
             for r_eff in rbio_eff:
-                if event_model == "Centered translocation":
+
+                # choose event type
+                if event_mode == "Combined mixture":
+                    event_type = rng.choice(
+                        ["Centered translocation", "Bump / partial entry", "Adsorption / rim interaction"],
+                        p=[w_centered, w_bump, w_ads]
+                    )
+                else:
+                    event_type = event_mode
+
+                # assign offset from event type
+                if event_type == "Centered translocation":
                     offset = 0.0
-                elif event_model == "Bump / partial entry":
+
+                elif event_type == "Bump / partial entry":
                     offset = rng.uniform(
                         max(0.0, pore_radius - 0.3 * r_eff),
                         pore_radius + 0.8 * r_eff
                     )
-                else:
+
+                else:  # Adsorption / rim interaction
                     offset = rng.uniform(
                         max(0.0, pore_radius - 0.8 * r_eff),
                         pore_radius + 0.2 * r_eff
@@ -816,9 +834,19 @@ if page == "ΔI Range Explorer":
                 di_val = delta_i_from_blocked_area(i0_A, d_m, L_m, V, sigma, A_blocked)
 
                 if np.isfinite(di_val):
-                    di_list.append(di_val * 1e12)
+                    di_pA_val = di_val * 1e12
+                    di_list.append(di_pA_val)
+
+                    if event_type == "Centered translocation":
+                        di_centered.append(di_pA_val)
+                    elif event_type == "Bump / partial entry":
+                        di_bump.append(di_pA_val)
+                    else:
+                        di_ads.append(di_pA_val)
+
                     offset_list_nm.append(offset * 1e9)
                     blocked_area_list_nm2.append(A_blocked * 1e18)
+                    event_labels.append(event_type)
 
             di_pA_theory = np.array(di_list)
 
@@ -847,18 +875,20 @@ if page == "ΔI Range Explorer":
                     "ΔI_theory (pA)": di_pA_theory,
                     "ΔI_noisy (pA)": di_pA_noisy,
                     "offset (nm)": offset_list_nm,
-                    "blocked area (nm²)": blocked_area_list_nm2
+                    "blocked area (nm²)": blocked_area_list_nm2,
+                    "event type": event_labels
                 })
-                st.dataframe(diag_df.describe().T, use_container_width=True)
+                st.dataframe(diag_df.head(50), use_container_width=True)
 
-                fig, ax = plt.subplots(figsize=(7, 5))
+                fig, ax = plt.subplots(figsize=(8, 5))
 
+                # total predicted histogram
                 if plot_mode in ["Theoretical only", "Both"]:
                     ax.hist(
                         di_pA_theory,
                         bins=60,
                         alpha=0.55 if plot_mode == "Both" else 0.85,
-                        label="Theoretical ΔI"
+                        label="Predicted total ΔI"
                     )
 
                 if plot_mode in ["Noisy only", "Both"]:
@@ -866,8 +896,17 @@ if page == "ΔI Range Explorer":
                         di_pA_noisy,
                         bins=60,
                         alpha=0.55 if plot_mode == "Both" else 0.85,
-                        label="Noisy ΔI"
+                        label="Predicted noisy ΔI"
                     )
+
+                # component overlays
+                if event_mode == "Combined mixture":
+                    if len(di_centered) > 0:
+                        ax.hist(di_centered, bins=60, histtype="step", linewidth=1.8, label="Centered component")
+                    if len(di_bump) > 0:
+                        ax.hist(di_bump, bins=60, histtype="step", linewidth=1.8, label="Bump component")
+                    if len(di_ads) > 0:
+                        ax.hist(di_ads, bins=60, histtype="step", linewidth=1.8, label="Adsorption component")
 
                 ax.set_xlabel("ΔI (pA)")
                 ax.set_ylabel("Count")
@@ -882,6 +921,7 @@ if page == "ΔI Range Explorer":
                         "Gaussian noise is added after the geometric ΔI simulation to mimic experimental broadening."
                     )
 
+    # ---------- Rod / spherocylinder ----------
     else:
         Lrod_nm = st.number_input("Rod length L_rod (nm)", value=50.0, step=5.0)
         Drod_nm = st.number_input("Rod diameter D_rod (nm)", value=6.0, step=0.5)

@@ -1,13 +1,10 @@
 import io
-import os
-import time
 import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
 from scipy.optimize import brentq, fsolve
-from PIL import Image, ImageDraw
+from scipy.stats import gaussian_kde
 
 st.set_page_config(
     page_title="NanoScope",
@@ -118,93 +115,6 @@ def projected_area_ellipsoid(a, b, c, nvec):
     return (np.pi * a * b * c) / denom
 
 
-# =========================
-# Navigation
-# =========================
-page = st.sidebar.radio(
-    "Navigation",
-    [
-        "Home",
-        "Size Calculator",
-        "ΔI Range Explorer",
-    ]
-)
-
-# =========================
-# Home
-# =========================
-if page == "Home":
-
-    st.header("Welcome to NanoScope")
-
-    st.write("""
-NanoScope is a nanopore analysis tool for exploring pore geometry,
-ionic current, and biomolecule blockade signals.
-
-This tool allows you to:
-
-• Estimate nanopore size from IV curves  
-• Model blockade current (ΔI) for different biomarker geometries  
-• Explore orientation effects for ellipsoids and rod-like proteins  
-• Visualize translocation events with a live animation
-""")
-
-    st.subheader("Modules")
-
-    st.write("""
-**Size Calculator**
-
-Estimate pore diameter from conductance using CBD or conical models.
-
-**ΔI Range Explorer**
-
-Predict possible current blockade values for biomolecules entering
-the nanopore with different orientations.
-
-**Live Animation**
-
-Animate a translocation/bump/adsorption event with a synchronized
-current trace based on the same blockade model.
-
-**Biomolecule Flow**
-
-Visualize continuous biomolecule flow toward the nanopore with a
-dynamic current signal driven by pore occupancy.
-""")
-
-    st.info("Developed for nanopore biosensing research.")
-
-# =========================
-# Common: TXT -> clean CSV
-# =========================
-def clean_voltage(v: str) -> float:
-    v = str(v).strip()
-    if v.endswith("m"):
-        return float(v.replace("m", "")) * 1e-3
-    return float(v)
-
-
-def clean_current(i: str) -> float:
-    i = str(i).strip()
-    if i.endswith("n"):
-        return float(i.replace("n", "")) * 1e-9
-    if i.endswith("f"):
-        return float(i.replace("f", "")) * 1e-15
-    return float(i)
-
-
-def txt_to_iv_clean_df(file_bytes: bytes) -> pd.DataFrame:
-    s = file_bytes.decode("utf-8", errors="ignore")
-    df = pd.read_csv(io.StringIO(s), skipinitialspace=True)
-    df["Voltage_V"] = df["Voltage2[V]"].apply(clean_voltage)
-    df["Current_A"] = df["Current[A]"].apply(clean_current)
-    out = df[["Sweep #", "Voltage_V", "Current_A"]].copy()
-    return out
-
-
-# =========================
-# Common helpers
-# =========================
 def sort_by_voltage(V, I):
     idx = np.argsort(V)
     return V[idx], I[idx]
@@ -262,154 +172,6 @@ def pick_linear_region_auto(V, I, eps=0.005, window=0.05, min_points=6):
                 "Try increasing window, lowering min_points, or use a global fit."
             )
 
-
-def _to_px(x, y, W=1400, H=700):
-    """
-    Convert scene coordinates:
-    x in [-1, 1], y in [-1.35, 1.35]
-    to image pixels.
-    """
-    px = int((x + 1) / 2 * W)
-    py = int((1.35 - y) / 2.7 * H)
-    return px, py
-
-
-def build_gif_frame(frame_idx, y_positions, x_positions, currents, deltaI_pA, i0_nA,
-                    show_labels=True, W=1400, H=700):
-    """
-    Build one combined dashboard frame as a PIL image.
-    Left = nanopore scene
-    Right = current trace
-    """
-    img = Image.new("RGB", (W, H), (10, 23, 48))
-    draw = ImageDraw.Draw(img)
-
-    left_w = int(W * 0.62)
-    right_w = W - left_w
-    pad = 24
-
-    panel_bg = (12, 24, 46)
-    border = (55, 130, 210)
-
-    draw.rounded_rectangle((pad, pad, left_w - pad, H - pad), radius=24, fill=panel_bg, outline=border, width=2)
-    draw.rounded_rectangle((left_w + pad, pad, W - pad, H - pad), radius=24, fill=panel_bg, outline=border, width=2)
-
-    draw.text((pad + 18, pad + 12), "Nanopore translocation", fill=(220, 235, 255))
-    draw.text((left_w + pad + 18, pad + 12), "Current vs time", fill=(220, 235, 255))
-
-    scene_x0 = pad + 10
-    scene_y0 = pad + 45
-    scene_x1 = left_w - pad - 10
-    scene_y1 = H - pad - 10
-
-    scene_w = scene_x1 - scene_x0
-    scene_h = scene_y1 - scene_y0
-
-    def scene_map(x, y):
-        px, py = _to_px(x, y, W=scene_w, H=scene_h)
-        return scene_x0 + px, scene_y0 + py
-
-    xL, yT = scene_map(-1, 0.16)
-    xR, yB = scene_map(1, 0.10)
-    draw.rectangle((xL, yT, xR, yB), fill=(70, 180, 220))
-
-    xL, yT = scene_map(-1, -0.10)
-    xR, yB = scene_map(1, -0.16)
-    draw.rectangle((xL, yT, xR, yB), fill=(70, 180, 220))
-
-    xL, yT = scene_map(-1, 0.10)
-    xR, yB = scene_map(1, -0.10)
-    draw.rectangle((xL, yT, xR, yB), fill=(50, 110, 180))
-
-    xL, yT = scene_map(-0.035, 0.16)
-    xR, yB = scene_map(0.035, -0.16)
-    draw.rectangle((xL, yT, xR, yB), fill=(10, 23, 48))
-
-    xL, yT = scene_map(-0.020, 0.16)
-    xR, yB = scene_map(0.020, -0.16)
-    draw.rectangle((xL, yT, xR, yB), fill=(34, 211, 238))
-
-    x = float(x_positions[frame_idx])
-    y = float(y_positions[frame_idx])
-    cx, cy = scene_map(x, y)
-
-    r1 = 26
-    draw.ellipse((cx - r1, cy - r1, cx + r1, cy + r1), fill=(139, 92, 246))
-    r2 = 14
-    draw.ellipse((cx - r2, cy - r2, cx + r2, cy + r2), fill=(190, 140, 255))
-
-    if show_labels:
-        tx, ty = scene_map(0, 1.22)
-        draw.text((tx - 10, ty), "cis", fill=(180, 190, 205))
-        tx, ty = scene_map(0, -1.28)
-        draw.text((tx - 15, ty), "trans", fill=(180, 190, 205))
-
-        tx, ty = scene_map(-0.88, 1.05)
-        draw.text((tx, ty), "+", fill=(255, 100, 130))
-        tx, ty = scene_map(-0.88, -1.05)
-        draw.text((tx, ty), "-", fill=(100, 170, 255))
-
-    plot_x0 = left_w + pad + 20
-    plot_y0 = pad + 60
-    plot_x1 = W - pad - 20
-    plot_y1 = H - pad - 40
-
-    draw.line((plot_x0, plot_y1, plot_x1, plot_y1), fill=(120, 140, 165), width=2)
-    draw.line((plot_x0, plot_y0, plot_x0, plot_y1), fill=(120, 140, 165), width=2)
-
-    y_min, y_max = 0.75, 1.02
-
-    def trace_map(t, val, tmax):
-        px = plot_x0 + int((t / max(1, tmax)) * (plot_x1 - plot_x0))
-        py = plot_y1 - int(((val - y_min) / (y_max - y_min)) * (plot_y1 - plot_y0))
-        return px, py
-
-    i0_y = trace_map(0, 1.0, len(currents) - 1)[1]
-    for xx in range(plot_x0, plot_x1, 16):
-        draw.line((xx, i0_y, min(xx + 8, plot_x1), i0_y), fill=(180, 180, 180), width=1)
-
-    pts = [trace_map(i, currents[i], len(currents) - 1) for i in range(frame_idx + 1)]
-    if len(pts) > 1:
-        draw.line(pts, fill=(56, 189, 248), width=4)
-
-    px, py = trace_map(frame_idx, currents[frame_idx], len(currents) - 1)
-    draw.ellipse((px - 6, py - 6, px + 6, py + 6), fill=(244, 63, 94))
-    draw.line((px, py, px, i0_y), fill=(244, 63, 94), width=2)
-
-    if show_labels:
-        draw.text((plot_x0 + 10, i0_y - 20), "I0", fill=(220, 235, 255))
-        draw.text((px + 8, py - 18), "I", fill=(255, 170, 180))
-        draw.text((px + 10, (py + i0_y) // 2), "dI", fill=(255, 170, 180))
-
-    metrics = f"I0 = {i0_nA:.2f} nA   |   I = {currents[frame_idx] * i0_nA:.2f} nA   |   ΔI = {deltaI_pA[frame_idx]:.0f} pA"
-    draw.text((left_w + pad + 18, H - pad - 26), metrics, fill=(180, 210, 255))
-
-    return img
-
-
-def generate_gif_bytes(y_positions, x_positions, currents, deltaI_pA, i0_nA,
-                       speed=1.4, show_labels=True, step=2):
-    frames = []
-    for idx in range(0, len(currents), step):
-        frame = build_gif_frame(
-            idx, y_positions, x_positions, currents, deltaI_pA, i0_nA,
-            show_labels=show_labels
-        )
-        frames.append(frame)
-
-    buf = io.BytesIO()
-    duration_ms = int(max(30, 80 / speed))
-
-    frames[0].save(
-        buf,
-        format="GIF",
-        save_all=True,
-        append_images=frames[1:],
-        duration=duration_ms,
-        loop=0
-    )
-    buf.seek(0)
-    return buf.getvalue()
 
 # =========================
 # CBD cylindrical size + MC uncertainty
@@ -481,11 +243,55 @@ def solve_tip_radius_brentq(G_single, K, L, theta, r_lo=0.5e-9, r_hi=300e-9):
         )
     return brentq(f, r_lo, r_hi, maxiter=2000)
 
+
+# =========================
+# Navigation
+# =========================
+page = st.sidebar.radio(
+    "Navigation",
+    [
+        "Home",
+        "Size Calculator",
+        "ΔI Range Explorer",
+    ]
+)
+
+# =========================
+# Home
+# =========================
+if page == "Home":
+    st.header("Welcome to NanoScope")
+
+    st.write("""
+NanoScope is a nanopore analysis tool for exploring pore geometry,
+ionic current, and biomolecule blockade signals.
+
+This tool allows you to:
+
+• Estimate nanopore size from IV curves  
+• Model blockade current (ΔI) for different biomarker geometries  
+• Explore orientation effects for ellipsoids and rod-like proteins
+""")
+
+    st.subheader("Modules")
+
+    st.write("""
+**Size Calculator**
+
+Estimate pore diameter from conductance using CBD or conical models.
+
+**ΔI Range Explorer**
+
+Predict possible current blockade values for biomolecules entering
+the nanopore with different orientations.
+""")
+
+    st.info("Developed for nanopore biosensing research.")
+
 # =========================
 # TAB 1: Size Calculator
 # =========================
 if page == "Size Calculator":
-
     st.subheader("1) Upload IV file")
     up = st.file_uploader("Upload .csv or .txt", type=["csv", "txt"], key="iv_upload")
 
@@ -495,7 +301,27 @@ if page == "Size Calculator":
         name = up.name.lower()
 
         if name.endswith(".txt"):
-            df_iv = txt_to_iv_clean_df(raw)
+            s = raw.decode("utf-8", errors="ignore")
+            df = pd.read_csv(io.StringIO(s), skipinitialspace=True)
+
+            def clean_voltage(v: str) -> float:
+                v = str(v).strip()
+                if v.endswith("m"):
+                    return float(v.replace("m", "")) * 1e-3
+                return float(v)
+
+            def clean_current(i: str) -> float:
+                i = str(i).strip()
+                if i.endswith("n"):
+                    return float(i.replace("n", "")) * 1e-9
+                if i.endswith("f"):
+                    return float(i.replace("f", "")) * 1e-15
+                return float(i)
+
+            df["Voltage_V"] = df["Voltage2[V]"].apply(clean_voltage)
+            df["Current_A"] = df["Current[A]"].apply(clean_current)
+            df_iv = df[["Sweep #", "Voltage_V", "Current_A"]].copy()
+
             st.success("Loaded TXT → converted to clean CSV columns (Voltage_V, Current_A).")
             out_csv = df_iv.to_csv(index=False).encode("utf-8")
             st.download_button("Download cleaned CSV", out_csv, file_name="IV_clean.csv", mime="text/csv")
@@ -652,48 +478,10 @@ if page == "Size Calculator":
                         r = fsolve(eq_r, r0)[0]
                         st.success(f"Estimated tip radius r ≈ {r*1e9:.2f} nm")
 
-                elif stage.startswith("After functionalization"):
-                    window = st.number_input("Fit window ±V (V)", value=0.1, step=0.01, format="%.3f")
-                    if st.button("Compute r (functionalization, window fit through origin)"):
-                        mask = (V > -window) & (V < window)
-                        V_lin, I_lin = V[mask], I[mask]
-
-                        G_total = slope_through_origin(V_lin, I_lin)
-                        G_single = G_total / n
-
-                        st.write(f"Points in window: {V_lin.size}")
-                        st.write(f"G_total: {G_total:.6e} S")
-                        st.write(f"G_single: {G_single:.6e} S")
-
-                        r = solve_tip_radius_brentq(G_single, K, L, theta)
-                        st.success(f"Estimated tip radius r ≈ {r*1e9:.2f} nm")
-
-                else:
-                    window = st.number_input("Fit window ±V (V)", value=0.1, step=0.01, format="%.3f")
-                    if st.button("Compute r (biosensing IV, polyfit+intercept)"):
-                        mask = (V >= -window) & (V <= window)
-                        V_lin, I_lin = V[mask], I[mask]
-
-                        G_total, I0 = slope_with_intercept(V_lin, I_lin)
-                        G_single = G_total / n
-
-                        st.write(f"Points in window: {V_lin.size}")
-                        st.write(f"G_total: {G_total:.6e} S")
-                        st.write(f"Intercept: {I0:.3e} A")
-                        st.write(f"G_single: {G_single:.6e} S")
-
-                        def eq_r(r):
-                            return G_conical_single(r, K, L, theta) - G_single
-
-                        r0 = 60e-9
-                        r = fsolve(eq_r, r0)[0]
-                        st.success(f"Estimated tip radius r ≈ {r*1e9:.2f} nm")
-
 # =========================
 # TAB 2: ΔI Range Explorer
 # =========================
 if page == "ΔI Range Explorer":
-
     st.subheader("ΔI Range Explorer")
 
     st.markdown("### Inputs")
@@ -735,7 +523,6 @@ if page == "ΔI Range Explorer":
 
     # ---------- Ellipsoid ----------
     elif model.startswith("Ellipsoid"):
-
         A_nm = st.number_input("Axis A (nm) (long)", value=14.0, step=0.5)
         B_nm = st.number_input("Axis B (nm)", value=4.0, step=0.5)
         C_nm = st.number_input("Axis C (nm)", value=4.0, step=0.5)
@@ -754,7 +541,6 @@ if page == "ΔI Range Explorer":
 
         if event_mode == "Combined mixture":
             st.markdown("### Event mixture weights")
-
             mix_centered = st.slider("Centered fraction", 0.0, 1.0, 0.4, 0.05)
             mix_bump = st.slider("Bump fraction", 0.0, 1.0, 0.4, 0.05)
             mix_ads = st.slider("Adsorption fraction", 0.0, 1.0, 0.2, 0.05)
@@ -775,13 +561,16 @@ if page == "ΔI Range Explorer":
         st.markdown("### Noise model")
         add_noise = st.checkbox("Add Gaussian measurement noise", value=True)
         noise_pA = st.slider("Noise SD (pA)", 0.0, 1000.0, 20.0, 1.0)
-        plot_mode = st.selectbox(
-            "Histogram view",
-            ["Noisy only", "Theoretical only", "Both"]
+
+        hist_source = st.selectbox(
+            "Histogram source",
+            ["Noisy prediction", "Theoretical prediction", "Both"]
         )
 
-        if st.button("Compute ΔI range (ellipsoid)"):
+        show_component_curves = st.checkbox("Show component smooth curves", value=True)
+        kde_bandwidth = st.slider("Smoothness (KDE bandwidth factor)", 0.3, 2.0, 1.0, 0.1)
 
+        if st.button("Compute ΔI range (ellipsoid)"):
             rng = np.random.default_rng(seed)
             a = (A_nm / 2) * 1e-9
             b = (B_nm / 2) * 1e-9
@@ -794,7 +583,6 @@ if page == "ΔI Range Explorer":
             dbio_eff = 2 * np.sqrt(Aproj / np.pi)
             rbio_eff = dbio_eff / 2.0
 
-            di_list = []
             di_centered = []
             di_bump = []
             di_ads = []
@@ -804,8 +592,6 @@ if page == "ΔI Range Explorer":
             event_labels = []
 
             for r_eff in rbio_eff:
-
-                # choose event type
                 if event_mode == "Combined mixture":
                     event_type = rng.choice(
                         ["Centered translocation", "Bump / partial entry", "Adsorption / rim interaction"],
@@ -814,17 +600,14 @@ if page == "ΔI Range Explorer":
                 else:
                     event_type = event_mode
 
-                # assign offset from event type
                 if event_type == "Centered translocation":
                     offset = 0.0
-
                 elif event_type == "Bump / partial entry":
                     offset = rng.uniform(
                         max(0.0, pore_radius - 0.3 * r_eff),
                         pore_radius + 0.8 * r_eff
                     )
-
-                else:  # Adsorption / rim interaction
+                else:
                     offset = rng.uniform(
                         max(0.0, pore_radius - 0.8 * r_eff),
                         pore_radius + 0.2 * r_eff
@@ -835,7 +618,6 @@ if page == "ΔI Range Explorer":
 
                 if np.isfinite(di_val):
                     di_pA_val = di_val * 1e12
-                    di_list.append(di_pA_val)
 
                     if event_type == "Centered translocation":
                         di_centered.append(di_pA_val)
@@ -848,21 +630,39 @@ if page == "ΔI Range Explorer":
                     blocked_area_list_nm2.append(A_blocked * 1e18)
                     event_labels.append(event_type)
 
-            di_pA_theory = np.array(di_list)
+            di_centered = np.asarray(di_centered)
+            di_bump = np.asarray(di_bump)
+            di_ads = np.asarray(di_ads)
+
+            di_theory_all = np.concatenate([
+                di_centered if di_centered.size else np.array([]),
+                di_bump if di_bump.size else np.array([]),
+                di_ads if di_ads.size else np.array([])
+            ])
 
             if add_noise and noise_pA > 0:
-                di_pA_noisy = di_pA_theory + rng.normal(0.0, noise_pA, size=len(di_pA_theory))
+                di_centered_noisy = di_centered + rng.normal(0.0, noise_pA, size=len(di_centered)) if di_centered.size else np.array([])
+                di_bump_noisy = di_bump + rng.normal(0.0, noise_pA, size=len(di_bump)) if di_bump.size else np.array([])
+                di_ads_noisy = di_ads + rng.normal(0.0, noise_pA, size=len(di_ads)) if di_ads.size else np.array([])
             else:
-                di_pA_noisy = di_pA_theory.copy()
+                di_centered_noisy = di_centered.copy()
+                di_bump_noisy = di_bump.copy()
+                di_ads_noisy = di_ads.copy()
 
-            if plot_mode == "Theoretical only":
-                di_pA = di_pA_theory
-            elif plot_mode == "Noisy only":
-                di_pA = di_pA_noisy
+            di_noisy_all = np.concatenate([
+                di_centered_noisy if di_centered_noisy.size else np.array([]),
+                di_bump_noisy if di_bump_noisy.size else np.array([]),
+                di_ads_noisy if di_ads_noisy.size else np.array([])
+            ])
+
+            if hist_source == "Theoretical prediction":
+                di_for_stats = di_theory_all
+            elif hist_source == "Noisy prediction":
+                di_for_stats = di_noisy_all
             else:
-                di_pA = di_pA_noisy
+                di_for_stats = di_noisy_all
 
-            stats = summarize(di_pA)
+            stats = summarize(di_for_stats)
 
             if stats is None:
                 st.error("No valid events were generated.")
@@ -872,53 +672,128 @@ if page == "ΔI Range Explorer":
                 st.caption(f"Valid simulated events: {stats['count']:,} | Median ΔI ≈ {stats['median']:.0f} pA")
 
                 diag_df = pd.DataFrame({
-                    "ΔI_theory (pA)": di_pA_theory,
-                    "ΔI_noisy (pA)": di_pA_noisy,
                     "offset (nm)": offset_list_nm,
                     "blocked area (nm²)": blocked_area_list_nm2,
                     "event type": event_labels
                 })
                 st.dataframe(diag_df.head(50), use_container_width=True)
 
-                fig, ax = plt.subplots(figsize=(8, 5))
+                # -----------------------------
+                # Pretty histogram + physical component curves
+                # -----------------------------
+                candidates = []
+                if di_theory_all.size:
+                    candidates.append(di_theory_all)
+                if di_noisy_all.size:
+                    candidates.append(di_noisy_all)
 
-                # total predicted histogram
-                if plot_mode in ["Theoretical only", "Both"]:
+                global_min = min(np.min(x) for x in candidates)
+                global_max = max(np.max(x) for x in candidates)
+                x_grid = np.linspace(global_min, global_max, 1000)
+
+                fig, ax = plt.subplots(figsize=(8.5, 5.5))
+
+                # histogram bars
+                if hist_source in ["Theoretical prediction", "Both"] and di_theory_all.size:
                     ax.hist(
-                        di_pA_theory,
+                        di_theory_all,
                         bins=60,
-                        alpha=0.55 if plot_mode == "Both" else 0.85,
-                        label="Predicted total ΔI"
+                        density=True,
+                        alpha=0.35 if hist_source == "Both" else 0.55,
+                        label="Theoretical data"
                     )
 
-                if plot_mode in ["Noisy only", "Both"]:
+                if hist_source in ["Noisy prediction", "Both"] and di_noisy_all.size:
                     ax.hist(
-                        di_pA_noisy,
+                        di_noisy_all,
                         bins=60,
-                        alpha=0.55 if plot_mode == "Both" else 0.85,
-                        label="Predicted noisy ΔI"
+                        density=True,
+                        alpha=0.35 if hist_source == "Both" else 0.55,
+                        label="Noisy data"
                     )
 
-                # component overlays
-                if event_mode == "Combined mixture":
-                    if len(di_centered) > 0:
-                        ax.hist(di_centered, bins=60, histtype="step", linewidth=1.8, label="Centered component")
-                    if len(di_bump) > 0:
-                        ax.hist(di_bump, bins=60, histtype="step", linewidth=1.8, label="Bump component")
-                    if len(di_ads) > 0:
-                        ax.hist(di_ads, bins=60, histtype="step", linewidth=1.8, label="Adsorption component")
+                # helper for KDE
+                def kde_curve(data):
+                    if len(data) < 2:
+                        return None
+                    kde = gaussian_kde(data, bw_method=kde_bandwidth)
+                    return kde(x_grid)
+
+                # total curves
+                if hist_source in ["Theoretical prediction", "Both"] and di_theory_all.size > 1:
+                    y_total_theory = kde_curve(di_theory_all)
+                    ax.plot(x_grid, y_total_theory, linewidth=2.5, label="Total theoretical fit")
+
+                if hist_source in ["Noisy prediction", "Both"] and di_noisy_all.size > 1:
+                    y_total_noisy = kde_curve(di_noisy_all)
+                    ax.plot(x_grid, y_total_noisy, linewidth=2.5, label="Total noisy fit")
+
+                # component curves
+                if show_component_curves:
+                    comp_map = []
+                    if hist_source == "Theoretical prediction":
+                        comp_map = [
+                            ("Centered component", di_centered),
+                            ("Bump component", di_bump),
+                            ("Adsorption component", di_ads),
+                        ]
+                    elif hist_source == "Noisy prediction":
+                        comp_map = [
+                            ("Centered component", di_centered_noisy),
+                            ("Bump component", di_bump_noisy),
+                            ("Adsorption component", di_ads_noisy),
+                        ]
+                    else:
+                        comp_map = [
+                            ("Centered component", di_centered_noisy),
+                            ("Bump component", di_bump_noisy),
+                            ("Adsorption component", di_ads_noisy),
+                        ]
+
+                    for label, comp_data in comp_map:
+                        if len(comp_data) > 1:
+                            y_comp = kde_curve(comp_data)
+                            ax.plot(
+                                x_grid,
+                                y_comp,
+                                linestyle="--",
+                                linewidth=2,
+                                label=label
+                            )
 
                 ax.set_xlabel("ΔI (pA)")
-                ax.set_ylabel("Count")
+                ax.set_ylabel("Density")
                 ax.set_title("Predicted ΔI Histogram")
                 ax.grid(True, alpha=0.3)
                 ax.legend()
                 st.pyplot(fig)
                 plt.close(fig)
 
+                # component stats
+                if event_mode == "Combined mixture":
+                    comp_stats_df = pd.DataFrame([
+                        {
+                            "Component": "Centered",
+                            "Count": len(di_centered),
+                            "Median ΔI (pA)": np.median(di_centered) if len(di_centered) else np.nan,
+                        },
+                        {
+                            "Component": "Bump",
+                            "Count": len(di_bump),
+                            "Median ΔI (pA)": np.median(di_bump) if len(di_bump) else np.nan,
+                        },
+                        {
+                            "Component": "Adsorption",
+                            "Count": len(di_ads),
+                            "Median ΔI (pA)": np.median(di_ads) if len(di_ads) else np.nan,
+                        },
+                    ])
+                    st.dataframe(comp_stats_df, use_container_width=True)
+
                 if add_noise and noise_pA > 0:
                     st.caption(
-                        "Gaussian noise is added after the geometric ΔI simulation to mimic experimental broadening."
+                        "Gaussian noise is added after each physical event population is simulated, "
+                        "so the combined histogram preserves the centered / bump / adsorption trends."
                     )
 
     # ---------- Rod / spherocylinder ----------

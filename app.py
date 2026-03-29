@@ -477,7 +477,7 @@ if page == "Size Calculator":
                         r0 = 20e-9
                         r = fsolve(eq_r, r0)[0]
                         st.success(f"Estimated tip radius r ≈ {r*1e9:.2f} nm")
-                                elif stage.startswith("After functionalization / antibody (10 mM"):
+                elif stage.startswith("After functionalization / antibody (10 mM"):
                     eps = st.number_input(
                         "Exclude |V| < eps (V)",
                         value=0.005,

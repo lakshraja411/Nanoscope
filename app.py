@@ -477,6 +477,74 @@ if page == "Size Calculator":
                         r0 = 20e-9
                         r = fsolve(eq_r, r0)[0]
                         st.success(f"Estimated tip radius r ≈ {r*1e9:.2f} nm")
+                                elif stage.startswith("After functionalization / antibody (10 mM"):
+                    eps = st.number_input(
+                        "Exclude |V| < eps (V)",
+                        value=0.005,
+                        step=0.001,
+                        format="%.4f",
+                        key="func_eps"
+                    )
+                    window = st.number_input(
+                        "Start window |V| < window (V)",
+                        value=0.05,
+                        step=0.01,
+                        format="%.3f",
+                        key="func_window"
+                    )
+                    min_points = st.number_input(
+                        "Min points for fit",
+                        value=6,
+                        step=1,
+                        key="func_min_points"
+                    )
+
+                    if st.button("Compute r (after functionalization, 10 mM)"):
+                        V_lin, I_lin, w = pick_linear_region_auto(
+                            V, I, eps=eps, window=window, min_points=int(min_points)
+                        )
+                        G_total = slope_through_origin(V_lin, I_lin)
+                        G_single = G_total / n
+
+                        st.write(f"Using: eps={eps} V, window={w:.4f} V, points={V_lin.size}")
+                        st.write(f"G_total  = {G_total:.6e} S")
+                        st.write(f"G_single = {G_single:.6e} S")
+
+                        r = solve_tip_radius_brentq(G_single, K, L, theta)
+                        d = 2 * r
+
+                        st.success(f"Estimated tip radius r ≈ {r*1e9:.2f} nm")
+                        st.info(f"Estimated tip diameter d ≈ {d*1e9:.2f} nm")
+
+
+                elif stage.startswith("Antibody/biosensing IV (10 mM"):
+                    eps = st.number_input(
+                        "Ignore |V| < eps (V)",
+                        value=0.05,
+                        step=0.01,
+                        format="%.3f",
+                        key="ab_eps"
+                    )
+
+                    if st.button("Compute r (antibody/biosensing, polyfit+intercept)"):
+                        mask = np.abs(V) > eps
+                        G_total, intercept = slope_with_intercept(V[mask], I[mask])
+                        G_single = G_total / n
+
+                        st.write("Fit: I = G*V + b")
+                        st.write(f"G_total: {G_total:.6e} S")
+                        st.write(f"Intercept b: {intercept:.3e} A")
+                        st.write(f"G_single: {G_single:.6e} S")
+
+                        def eq_r(r):
+                            return G_conical_single(r, K, L, theta) - G_single
+
+                        r0 = 20e-9
+                        r = fsolve(eq_r, r0)[0]
+                        d = 2 * r
+
+                        st.success(f"Estimated tip radius r ≈ {r*1e9:.2f} nm")
+                        st.info(f"Estimated tip diameter d ≈ {d*1e9:.2f} nm")
 
 # =========================
 # TAB 2: ΔI Range Explorer

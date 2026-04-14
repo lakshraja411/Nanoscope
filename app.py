@@ -225,20 +225,20 @@ def mc_cyl_diameter(G_nS, dG_nS, sigma, dsigma, L_nm, dL_nm, include_access=True
 # Conical model
 # =========================
 def G_conical_single(r, K, L, theta):
-    num = 4 * np.pi * r * (r + L * np.tan(theta))
-    den = 4 * L + np.pi * (2 * r + L * np.tan(theta))
+    num = 4*np.pi*r*(r + L*np.tan(theta))
+    den = 4*L + np.pi*(2*r + L*np.tan(theta))
     return K * (num / den)
 
 
-def solve_tip_radius_brentq(G_single, K, L, theta, r_lo=0.5e-9, r_hi=300e-9):
+def solve_tip_radius_brentq(G_single, K, L, theta, r_lo=0.5e-9, r_hi=3000e-9):
     def f(r):
         return G_conical_single(r, K, L, theta) - G_single
 
     f_lo, f_hi = f(r_lo), f(r_hi)
     if f_lo * f_hi > 0:
         raise ValueError(
-            "Root not bracketed in [0.5 nm, 300 nm].\n"
-            f"f(0.5 nm)={f_lo:.3e}, f(300 nm)={f_hi:.3e}\n"
+            "Root not bracketed in [0.5 nm, 3000 nm].\n"
+            f"f(0.5 nm)={f_lo:.3e}, f(3000 nm)={f_hi:.3e}\n"
             "Check n, K, L, theta, or your conductance fit."
         )
     return brentq(f, r_lo, r_hi, maxiter=2000)

@@ -230,7 +230,7 @@ def G_conical_single(r, K, L, theta):
     return K * (num / den)
 
 
-def solve_tip_radius_brentq(G_single, K, L, theta, r_lo=0.5e-9, r_hi=300e-9):
+def solve_tip_radius_brentq(G_single, K, L, theta, r_lo=0.5e-9, r_hi=3000e-9):
     def f(r):
         return G_conical_single(r, K, L, theta) - G_single
 
@@ -248,10 +248,10 @@ def solve_tip_radius_brentq(G_single, K, L, theta, r_lo=0.5e-9, r_hi=300e-9):
         G_lo = G_conical_single(r_lo, K, L, theta)
         G_hi = G_conical_single(r_hi, K, L, theta)
         raise ValueError(
-            "Root not bracketed in [0.5 nm, 300 nm].\n"
+            "Root not bracketed in [0.5 nm, 3000 nm].\n"
             f"G_single target = {G_single:.6e} S\n"
             f"G(0.5 nm) = {G_lo:.6e} S\n"
-            f"G(300 nm) = {G_hi:.6e} S\n"
+            f"G(03000 nm) = {G_hi:.6e} S\n"
             "Check n, K, L, theta, or your conductance fit."
         )
 

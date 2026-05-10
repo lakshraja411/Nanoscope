@@ -996,7 +996,7 @@ if page == "ΔI Range Explorer":
                                 label=label
                             )
 
-                ax.set_xlabel("ΔI (pA"))
+                ax.set_xlabel("ΔI (pA")
                 ax.set_ylabel("Density", fontsize=12)
                 ax.set_title("Predicted ΔI Histogram")
 

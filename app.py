@@ -174,12 +174,13 @@ def plot_iv_line(V, I, title="I–V Curve", y_in_nA=True, show_fit=False, fit_G=
             V,
             I * 1e9,
             color="black",
+            linestyle="-",
             linewidth=1.5,
-            marker="s",
+            marker="o",
             markersize=4,
-            markerfacecolor="red",
+            markerfacecolor="white",
             markeredgecolor="black",
-            markeredgewidth=0.5,
+            markeredgewidth=0.8,
             label="IV data"
         )
         ax.set_ylabel("Current (nA)", fontsize=12)
@@ -199,12 +200,13 @@ def plot_iv_line(V, I, title="I–V Curve", y_in_nA=True, show_fit=False, fit_G=
             V,
             I,
             color="black",
+            linestyle="-",
             linewidth=1.5,
-            marker="s",
+            marker="o",
             markersize=4,
-            markerfacecolor="red",
+            markerfacecolor="white",
             markeredgecolor="black",
-            markeredgewidth=0.5,
+            markeredgewidth=0.8,
             label="IV data"
         )
         ax.set_ylabel("Current (A)", fontsize=12)
@@ -223,6 +225,13 @@ def plot_iv_line(V, I, title="I–V Curve", y_in_nA=True, show_fit=False, fit_G=
     ax.set_title(title, fontsize=13)
 
     origin_style_ax(ax)
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    if x0 < 0 < x1:
+        ax.axvline(0.0, color="#999999", linewidth=0.8, zorder=0)
+    if y0 < 0 < y1:
+        ax.axhline(0.0, color="#999999", linewidth=0.8, zorder=0)
+
     ax.legend(frameon=False, fontsize=10)
 
     fig.tight_layout()

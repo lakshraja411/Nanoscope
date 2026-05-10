@@ -181,7 +181,7 @@ def plot_iv_line(V, I, title="I–V Curve", y_in_nA=True, show_fit=False, fit_G=
     ax.set_xlabel("Voltage (V)")
     ax.set_title(title)
 
-   ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3)
 
     ax.legend()
     st.pyplot(fig)

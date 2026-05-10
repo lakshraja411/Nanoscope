@@ -16,6 +16,38 @@ st.title("🔬 NanoScope")
 st.caption("Size and Current Drop Predictor")
 
 # =========================
+# Origin-style plotting helper
+# =========================
+def origin_style_ax(ax):
+    """
+    Apply Origin-like publication styling to matplotlib axes.
+    """
+    ax.grid(False)
+
+    ax.tick_params(
+        direction="in",
+        length=5,
+        width=1.2,
+        labelsize=11,
+        top=False,
+        right=False
+    )
+
+    ax.minorticks_on()
+    ax.tick_params(
+        which="minor",
+        direction="in",
+        length=3,
+        width=0.8
+    )
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.2)
+
+    ax.set_facecolor("white")
+
+
+# =========================
 # Shared nanopore / geometry functions
 # =========================
 def pore_d_from_i0(i0_A, L_m, V_V, sigma_Sm):
@@ -134,22 +166,66 @@ def slope_with_intercept(V, I):
 
 def plot_iv_line(V, I, title="I–V Curve", y_in_nA=True, show_fit=False, fit_G=None):
     V, I = sort_by_voltage(V, I)
-    fig, ax = plt.subplots(figsize=(7, 5))
-    if y_in_nA:
-        ax.plot(V, I * 1e9, linewidth=2, label="IV data")
-        ax.set_ylabel("Current (nA)")
-        if show_fit and fit_G is not None:
-            ax.plot(V, (fit_G * V) * 1e9, linestyle="--", linewidth=2, label="Fit")
-    else:
-        ax.plot(V, I, linewidth=2, label="IV data")
-        ax.set_ylabel("Current (A)")
-        if show_fit and fit_G is not None:
-            ax.plot(V, fit_G * V, linestyle="--", linewidth=2, label="Fit")
 
-    ax.set_xlabel("Voltage (V)")
-    ax.set_title(title)
-    ax.grid(True, alpha=0.3)
-    ax.legend()
+    fig, ax = plt.subplots(figsize=(5.2, 4.0), dpi=300)
+
+    if y_in_nA:
+        ax.plot(
+            V,
+            I * 1e9,
+            color="black",
+            linewidth=1.5,
+            marker="s",
+            markersize=4,
+            markerfacecolor="red",
+            markeredgecolor="black",
+            markeredgewidth=0.5,
+            label="IV data"
+        )
+        ax.set_ylabel("Current (nA)", fontsize=12)
+
+        if show_fit and fit_G is not None:
+            ax.plot(
+                V,
+                (fit_G * V) * 1e9,
+                color="blue",
+                linestyle="-",
+                linewidth=1.8,
+                label="Fit"
+            )
+
+    else:
+        ax.plot(
+            V,
+            I,
+            color="black",
+            linewidth=1.5,
+            marker="s",
+            markersize=4,
+            markerfacecolor="red",
+            markeredgecolor="black",
+            markeredgewidth=0.5,
+            label="IV data"
+        )
+        ax.set_ylabel("Current (A)", fontsize=12)
+
+        if show_fit and fit_G is not None:
+            ax.plot(
+                V,
+                fit_G * V,
+                color="blue",
+                linestyle="-",
+                linewidth=1.8,
+                label="Fit"
+            )
+
+    ax.set_xlabel("Voltage (V)", fontsize=12)
+    ax.set_title(title, fontsize=13)
+
+    origin_style_ax(ax)
+    ax.legend(frameon=False, fontsize=10)
+
+    fig.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
 
@@ -326,7 +402,7 @@ def compute_conical_radius(V, I, n, K, L, theta, method, eps=0.005, window=0.05,
 # NaCl conductivity map
 # =========================
 K_MAP = {
-    "1 mM NaCl": 0.014,
+    "1 mM NaCl": 0.02,
     "10 mM NaCl": 0.14,
     "100 mM NaCl": 1.4,
     "1 M NaCl": 8.97,
@@ -489,7 +565,7 @@ if page == "Size Calculator":
                     G_S = slope_through_origin(V, I)
                     G_from_iv_nS = G_S * 1e9
 
-                    plot_iv_line(V, I, title="I–V (line) + global fit", y_in_nA=plot_nA, show_fit=True, fit_G=G_S)
+                    plot_iv_line(V, I, title="I–V Curve with Global Fit", y_in_nA=plot_nA, show_fit=True, fit_G=G_S)
                     st.info(f"Global slope (whole trace, through origin): **G = {G_from_iv_nS:.2f} nS**")
 
         st.markdown("### Inputs (with uncertainties)")
@@ -558,7 +634,7 @@ if page == "Size Calculator":
             if V is not None:
                 ok = np.isfinite(V) & np.isfinite(I)
                 V, I = V[ok], I[ok]
-                plot_iv_line(V, I, title="I–V (line)", y_in_nA=plot_nA)
+                plot_iv_line(V, I, title="I–V Curve", y_in_nA=plot_nA)
 
                 theta = np.deg2rad(theta_deg)
                 L = L_nm * 1e-9
@@ -880,14 +956,16 @@ if page == "ΔI Range Explorer":
                 global_max = max(np.max(x) for x in candidates)
                 x_grid = np.linspace(global_min, global_max, 1000)
 
-                fig, ax = plt.subplots(figsize=(8.5, 5.5))
+                fig, ax = plt.subplots(figsize=(5.5, 4.2), dpi=300)
 
                 if hist_source in ["Theoretical prediction", "Both"] and di_theory_all.size:
                     ax.hist(
                         di_theory_all,
                         bins=60,
                         density=True,
-                        alpha=0.35 if hist_source == "Both" else 0.55,
+                        alpha=0.35 if hist_source == "Both" else 0.50,
+                        edgecolor="black",
+                        linewidth=0.5,
                         label="Theoretical data"
                     )
 
@@ -896,7 +974,9 @@ if page == "ΔI Range Explorer":
                         di_noisy_all,
                         bins=60,
                         density=True,
-                        alpha=0.35 if hist_source == "Both" else 0.55,
+                        alpha=0.35 if hist_source == "Both" else 0.50,
+                        edgecolor="black",
+                        linewidth=0.5,
                         label="Noisy data"
                     )
 
@@ -908,11 +988,23 @@ if page == "ΔI Range Explorer":
 
                 if hist_source in ["Theoretical prediction", "Both"] and di_theory_all.size > 1:
                     y_total_theory = kde_curve(di_theory_all)
-                    ax.plot(x_grid, y_total_theory, linewidth=2.5, label="Total theoretical fit")
+                    ax.plot(
+                        x_grid,
+                        y_total_theory,
+                        color="blue",
+                        linewidth=2.0,
+                        label="Total theoretical fit"
+                    )
 
                 if hist_source in ["Noisy prediction", "Both"] and di_noisy_all.size > 1:
                     y_total_noisy = kde_curve(di_noisy_all)
-                    ax.plot(x_grid, y_total_noisy, linewidth=2.5, label="Total noisy fit")
+                    ax.plot(
+                        x_grid,
+                        y_total_noisy,
+                        color="black",
+                        linewidth=2.0,
+                        label="Total noisy fit"
+                    )
 
                 if show_component_curves:
                     comp_map = []
@@ -942,15 +1034,18 @@ if page == "ΔI Range Explorer":
                                 x_grid,
                                 y_comp,
                                 linestyle="--",
-                                linewidth=2,
+                                linewidth=1.7,
                                 label=label
                             )
 
-                ax.set_xlabel("ΔI (pA)")
-                ax.set_ylabel("Density")
-                ax.set_title("Predicted ΔI Histogram")
-                ax.grid(True, alpha=0.3)
-                ax.legend()
+                ax.set_xlabel("ΔI (pA)", fontsize=12)
+                ax.set_ylabel("Density", fontsize=12)
+                ax.set_title("Predicted ΔI Histogram", fontsize=13)
+
+                origin_style_ax(ax)
+                ax.legend(frameon=False, fontsize=8)
+
+                fig.tight_layout()
                 st.pyplot(fig)
                 plt.close(fig)
 
@@ -1006,3 +1101,19 @@ if page == "ΔI Range Explorer":
                 st.caption(f"Valid angles used: {stats['count']:,} | Typical ΔI ≈ {stats['median']:.0f} pA")
                 st.write(f"Aligned (θ=0°) ΔI ≈ {di_pA[0]:.0f} pA")
                 st.write(f"Side-on (θ=90°) ΔI ≈ {di_pA[-1]:.0f} pA")
+
+                # Optional Origin-style rod angle plot
+                fig, ax = plt.subplots(figsize=(5.5, 4.2), dpi=300)
+                ax.plot(
+                    np.degrees(theta),
+                    di_pA,
+                    color="black",
+                    linewidth=1.8
+                )
+                ax.set_xlabel("Angle θ (degrees)", fontsize=12)
+                ax.set_ylabel("ΔI (pA)", fontsize=12)
+                ax.set_title("Rod Orientation vs ΔI", fontsize=13)
+                origin_style_ax(ax)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
